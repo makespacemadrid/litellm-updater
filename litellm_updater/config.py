@@ -13,14 +13,8 @@ DEFAULT_CONFIG_PATH = Path("data/config.json")
 
 DEFAULT_CONFIG = AppConfig(
     litellm=LitellmTarget(base_url="http://localhost:4000"),
-    sources=[
-        SourceEndpoint(
-            name="Local Ollama",
-            base_url="http://localhost:11434",
-            type=SourceType.OLLAMA,
-        )
-    ],
-    sync_interval_seconds=300,
+    sources=[],
+    sync_interval_seconds=0,
 )
 
 

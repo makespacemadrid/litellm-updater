@@ -3,13 +3,6 @@
     "base_url": "http://localhost:4000",
     "api_key": null
   },
-  "sources": [
-    {
-      "name": "Local Ollama",
-      "base_url": "http://localhost:11434",
-      "type": "ollama",
-      "api_key": null
-    }
-  ],
-  "sync_interval_seconds": 300
+  "sources": [],
+  "sync_interval_seconds": 0
 }
