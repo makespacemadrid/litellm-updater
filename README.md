@@ -26,10 +26,10 @@ A small FastAPI service for synchronizing models from Ollama or other LiteLLM/Op
 
 3. **Configure sources and LiteLLM target**
    - Navigate to `http://localhost:8000/admin` to set the LiteLLM base URL, update the sync interval, or add/remove sources.
-   - A default `data/config.json` is generated on first run with a single local Ollama source and a LiteLLM target at `http://localhost:4000`.
+   - A default `data/config.json` is generated on first run with an empty provider list, automatic sync disabled, and a LiteLLM target at `http://localhost:4000`.
 
 4. **Trigger sync**
-   - The scheduler runs automatically using the configured interval.
+   - The scheduler runs automatically only when the interval is greater than zero.
    - Use the "Run sync now" button on the overview or models page to trigger a manual sync.
 
 ## Running with Docker
@@ -51,10 +51,8 @@ Configuration is stored in `data/config.json` and uses the following shape:
 ```json
 {
   "litellm": {"base_url": "http://localhost:4000", "api_key": null},
-  "sources": [
-    {"name": "Local Ollama", "base_url": "http://localhost:11434", "type": "ollama", "api_key": null}
-  ],
-  "sync_interval_seconds": 300
+  "sources": [],
+  "sync_interval_seconds": 0
 }
 ```
 

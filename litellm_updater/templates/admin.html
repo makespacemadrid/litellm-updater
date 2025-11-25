@@ -12,7 +12,8 @@
 <section class="panel">
   <h2>Sync Interval</h2>
   <form action="/admin/interval" method="post">
-    <label>Seconds <input type="number" name="sync_interval_seconds" value="{{ config.sync_interval_seconds }}" min="30" /></label>
+    <label>Seconds <input type="number" name="sync_interval_seconds" value="{{ config.sync_interval_seconds }}" min="0" /></label>
+    <p class="muted">Set to 0 to disable automatic synchronization. Minimum when enabled: 30 seconds.</p>
     <button type="submit">Update interval</button>
   </form>
 </section>

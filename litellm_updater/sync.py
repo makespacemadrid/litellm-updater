@@ -57,6 +57,11 @@ async def start_scheduler(config_loader: Callable[[], AppConfig], store_callback
     logger.info("Starting scheduler")
     while True:
         config = config_loader()
+        if config.sync_interval_seconds <= 0:
+            logger.info("Automatic synchronization disabled; skipping run")
+            await asyncio.sleep(60)
+            continue
+
         results = await sync_once(config)
         store_callback(results)
         await asyncio.sleep(config.sync_interval_seconds)
