@@ -39,6 +39,13 @@ async def sync_once(config: AppConfig) -> Dict[str, SourceModels]:
                 results[source.name] = source_models
                 for model in source_models.models:
                     await _register_model_with_litellm(client, config.litellm.base_url, config.litellm.api_key, model)
+            except httpx.RequestError as exc:  # pragma: no cover - runtime logging
+                logger.warning(
+                    "Failed reaching source %s at %s: %s",
+                    source.name,
+                    source.base_url,
+                    exc,
+                )
             except Exception as exc:  # pragma: no cover - runtime logging
                 logger.exception("Failed syncing source %s: %s", source.name, exc)
     return results
