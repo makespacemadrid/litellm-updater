@@ -12,7 +12,7 @@ from .models import LitellmTarget, ModelMetadata, SourceEndpoint, SourceModels, 
 async def fetch_ollama_models(client: httpx.AsyncClient, source: SourceEndpoint) -> List[ModelMetadata]:
     """Fetch models from an Ollama server."""
 
-    url = f"{source.base_url}/api/tags"
+    url = f"{source.normalized_base_url}/api/tags"
     headers = {"Authorization": f"Bearer {source.api_key}"} if source.api_key else {}
     response = await client.get(url, headers=headers, timeout=30)
     response.raise_for_status()
@@ -24,7 +24,7 @@ async def fetch_ollama_models(client: httpx.AsyncClient, source: SourceEndpoint)
 async def fetch_litellm_models(client: httpx.AsyncClient, source: SourceEndpoint) -> List[ModelMetadata]:
     """Fetch models from a LiteLLM / OpenAI-compatible endpoint."""
 
-    url = f"{source.base_url}/v1/models"
+    url = f"{source.normalized_base_url}/v1/models"
     headers = {"Authorization": f"Bearer {source.api_key}"} if source.api_key else {}
     response = await client.get(url, headers=headers, timeout=30)
     response.raise_for_status()
@@ -41,7 +41,7 @@ async def fetch_litellm_target_models(target: LitellmTarget) -> List[ModelMetada
 
     source = SourceEndpoint(
         name="LiteLLM",
-        base_url=target.base_url,
+        base_url=target.normalized_base_url,
         type=SourceType.LITELLM,
         api_key=target.api_key,
     )

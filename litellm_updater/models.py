@@ -26,6 +26,12 @@ class SourceEndpoint(BaseModel):
         description="Optional API key or bearer token used to authenticate against the source",
     )
 
+    @property
+    def normalized_base_url(self) -> str:
+        """Return the base URL without a trailing slash for safe path joining."""
+
+        return str(self.base_url).rstrip("/")
+
 
 class LitellmTarget(BaseModel):
     """Target LiteLLM proxy configuration."""
@@ -40,6 +46,14 @@ class LitellmTarget(BaseModel):
         """Return True when a LiteLLM endpoint has been configured."""
 
         return self.base_url is not None
+
+    @property
+    def normalized_base_url(self) -> str:
+        """Return the base URL without a trailing slash for safe path joining."""
+
+        if self.base_url is None:
+            raise ValueError("LiteLLM endpoint is not configured")
+        return str(self.base_url).rstrip("/")
 
 
 class ModelMetadata(BaseModel):
