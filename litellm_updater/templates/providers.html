@@ -102,11 +102,29 @@
 
   function describeLitellmModel(litellmModel = {}) {
     const capabilityList = Array.isArray(litellmModel.capabilities) ? litellmModel.capabilities.join(', ') : '';
+
+    // Extract pricing information
+    const pricing = [];
+    if (litellmModel.input_cost_per_token) {
+      pricing.push(`Input: $${(litellmModel.input_cost_per_token * 1000).toFixed(4)}/1K tokens`);
+    }
+    if (litellmModel.output_cost_per_token) {
+      pricing.push(`Output: $${(litellmModel.output_cost_per_token * 1000).toFixed(4)}/1K tokens`);
+    }
+    if (litellmModel.input_cost_per_second) {
+      pricing.push(`Audio: $${(litellmModel.input_cost_per_second * 60).toFixed(4)}/minute`);
+    }
+    if (litellmModel.output_cost_per_image) {
+      pricing.push(`Image: $${litellmModel.output_cost_per_image.toFixed(2)}/image`);
+    }
+
     const parts = [
       litellmModel.model_type ? `Tipo: ${litellmModel.model_type}` : null,
+      litellmModel.mode ? `Modo: ${litellmModel.mode}` : null,
       litellmModel.context_window ? `Contexto: ${litellmModel.context_window.toLocaleString()} tokens` : null,
       litellmModel.max_output_tokens ? `Salida máxima: ${litellmModel.max_output_tokens.toLocaleString()} tokens` : null,
       capabilityList ? `Capacidades: ${capabilityList}` : null,
+      pricing.length > 0 ? `Precios (ref. OpenAI): ${pricing.join(', ')}` : null,
     ].filter(Boolean);
 
     return parts.length > 0 ? parts.join(' · ') : 'No se encontraron campos compatibles con LiteLLM.';

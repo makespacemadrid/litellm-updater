@@ -143,6 +143,38 @@ def _extract_capabilities(raw: Dict) -> List[str]:
     return _dedupe(capabilities)
 
 
+def _map_capabilities_to_supports(capabilities: List[str]) -> Dict[str, Any]:
+    """Map capability strings to LiteLLM supports_* boolean fields."""
+
+    supports: Dict[str, Any] = {}
+
+    cap_lower = [str(c).lower() for c in capabilities]
+
+    # Map capabilities to supports fields
+    if "vision" in cap_lower:
+        supports["supports_vision"] = True
+    if "tools" in cap_lower or "function calling" in cap_lower or "function_calling" in cap_lower:
+        supports["supports_function_calling"] = True
+        supports["supports_tool_choice"] = True
+    if "completion" in cap_lower or "chat" in cap_lower:
+        supports["supports_system_messages"] = True
+    if "thinking" in cap_lower or "reasoning" in cap_lower:
+        supports["supports_reasoning"] = True
+    if "embedding" in cap_lower:
+        # Embedding models typically don't support streaming the same way
+        pass
+    if "audio" in cap_lower or "audio input" in cap_lower:
+        supports["supports_audio_input"] = True
+    if "audio output" in cap_lower:
+        supports["supports_audio_output"] = True
+    if "pdf" in cap_lower or "pdf input" in cap_lower:
+        supports["supports_pdf_input"] = True
+    if "web search" in cap_lower or "web_search" in cap_lower:
+        supports["supports_web_search"] = True
+
+    return supports
+
+
 def _extract_model_type(model_id: str, raw: Dict, capabilities: List[str]) -> str | None:
     """Infer a model type such as embeddings or completion from known fields."""
 
@@ -209,6 +241,40 @@ def _fallback_context_window(model_id: str, context_window: int | None) -> int |
         return 128000
 
     return None
+
+
+def _get_default_pricing(model_type: str | None, mode: str | None) -> Dict[str, Any]:
+    """Get default pricing based on OpenAI GPT-4, Whisper, and DALL-E 3.
+
+    Pricing reference (2025):
+    - GPT-4: $0.00003/token input, $0.00006/token output
+    - Whisper: $0.0001/second
+    - DALL-E 3: $0.08/image (average)
+    """
+
+    pricing: Dict[str, Any] = {}
+
+    # Determine if this is an audio transcription model
+    if mode == "audio_transcription" or (model_type and "audio" in model_type.lower()):
+        # Whisper pricing: $0.006 per minute = $0.0001 per second
+        pricing["input_cost_per_second"] = 0.0001
+        pricing["output_cost_per_second"] = 0.0
+        return pricing
+
+    # Determine if this is an image generation model
+    if model_type and any(
+        keyword in model_type.lower() for keyword in ["image", "dall-e", "dalle", "vision-gen"]
+    ):
+        # DALL-E 3 average pricing: $0.08 per image
+        pricing["output_cost_per_image"] = 0.08
+        return pricing
+
+    # Default to GPT-4 chat/completion pricing
+    # GPT-4: $30 per 1M input tokens, $60 per 1M output tokens
+    pricing["input_cost_per_token"] = 0.00003  # $0.03 per 1K tokens
+    pricing["output_cost_per_token"] = 0.00006  # $0.06 per 1K tokens
+
+    return pricing
 
 
 # Fields recognized by LiteLLM model definitions that are useful to surface in the UI
@@ -354,7 +420,83 @@ class ModelMetadata(BaseModel):
             for key, value in _collect(section).items():
                 merged.setdefault(key, value)
 
+        # Add computed fields from normalized metadata
+        if self.mode:
+            merged["mode"] = self.mode
+        if self.max_tokens:
+            merged["max_tokens"] = self.max_tokens
+        if self.max_input_tokens:
+            merged["max_input_tokens"] = self.max_input_tokens
+        if self.context_window:
+            merged["max_input_tokens"] = merged.get("max_input_tokens", self.context_window)
+        if self.max_output_tokens:
+            merged["max_output_tokens"] = self.max_output_tokens
+
+        # Map capabilities to supports_* fields
+        supports_fields = _map_capabilities_to_supports(self.capabilities)
+        merged.update(supports_fields)
+
+        # Add default pricing
+        pricing = _get_default_pricing(self.model_type, self.mode)
+        merged.update(pricing)
+
+        # Map supported OpenAI parameters from Ollama parameters
+        supported_params = self._extract_supported_openai_params()
+        if supported_params:
+            merged["supported_openai_params"] = supported_params
+
+        # Always set litellm_provider for Ollama models
+        if "litellm_provider" not in merged:
+            merged["litellm_provider"] = "ollama"
+
         return merged
+
+    def _extract_supported_openai_params(self) -> List[str]:
+        """Extract supported OpenAI parameters from Ollama's parameters field."""
+
+        params_set = set()
+
+        # Check if raw has parameters string (Ollama format)
+        params_str = self.raw.get("parameters", "")
+        if isinstance(params_str, str):
+            if "temperature" in params_str:
+                params_set.add("temperature")
+            if "top_k" in params_str:
+                params_set.add("top_k")
+            if "top_p" in params_str:
+                params_set.add("top_p")
+            if "repeat_penalty" in params_str or "frequency_penalty" in params_str:
+                params_set.add("frequency_penalty")
+            if "presence_penalty" in params_str:
+                params_set.add("presence_penalty")
+            if "stop" in params_str:
+                params_set.add("stop")
+
+        # Check modelfile for PARAMETER directives
+        modelfile = self.raw.get("modelfile", "")
+        if isinstance(modelfile, str):
+            if "PARAMETER temperature" in modelfile:
+                params_set.add("temperature")
+            if "PARAMETER top_k" in modelfile:
+                params_set.add("top_k")
+            if "PARAMETER top_p" in modelfile:
+                params_set.add("top_p")
+            if "PARAMETER repeat_penalty" in modelfile:
+                params_set.add("frequency_penalty")
+            if "PARAMETER stop" in modelfile:
+                params_set.add("stop")
+
+        # Common parameters that most chat models support
+        if self.mode == "chat" or "completion" in (self.capabilities or []):
+            params_set.update(["max_tokens", "stream", "n", "seed"])
+
+        # Add tool support if capabilities indicate it
+        if "tools" in (self.capabilities or []) or "function calling" in str(
+            self.capabilities or []
+        ).lower():
+            params_set.update(["tools", "tool_choice"])
+
+        return sorted(params_set)
 
 
 class SourceModels(BaseModel):

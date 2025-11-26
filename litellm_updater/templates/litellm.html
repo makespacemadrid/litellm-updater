@@ -47,6 +47,22 @@
         {% if model.capabilities %}
         {% set _ = summary_parts.append("Capacidades: " ~ (model.capabilities | join(", "))) %}
         {% endif %}
+        {% set pricing_parts = [] %}
+        {% if mappable.get("input_cost_per_token") %}
+        {% set _ = pricing_parts.append("Input: $" ~ "{:.4f}".format(mappable["input_cost_per_token"] * 1000) ~ "/1K tokens") %}
+        {% endif %}
+        {% if mappable.get("output_cost_per_token") %}
+        {% set _ = pricing_parts.append("Output: $" ~ "{:.4f}".format(mappable["output_cost_per_token"] * 1000) ~ "/1K tokens") %}
+        {% endif %}
+        {% if mappable.get("input_cost_per_second") %}
+        {% set _ = pricing_parts.append("Audio: $" ~ "{:.4f}".format(mappable["input_cost_per_second"] * 60) ~ "/minute") %}
+        {% endif %}
+        {% if mappable.get("output_cost_per_image") %}
+        {% set _ = pricing_parts.append("Image: $" ~ "{:.2f}".format(mappable["output_cost_per_image"]) ~ "/image") %}
+        {% endif %}
+        {% if pricing_parts %}
+        {% set _ = summary_parts.append("Precios (ref. OpenAI): " ~ (pricing_parts | join(", "))) %}
+        {% endif %}
         {% if summary_parts %}
         {{ summary_parts | join(" · ") }}
         {% else %}
