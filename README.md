@@ -46,6 +46,26 @@ A small FastAPI service for synchronizing models from Ollama or other LiteLLM/Op
   ```
   The compose file binds the UI to `${PORT:-8000}` for both the host and container, and mounts the local `data/` directory so configuration persists across restarts.
 
+## Running integration tests
+- Create a virtual environment if you do not already have one:
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate
+  ```
+- Install dev dependencies so `pytest-asyncio` is available:
+  ```bash
+  pip install -e ".[dev]"
+  ```
+- Copy `tests/example.env` to `tests/.env` and point the values at live, reachable endpoints (URLs must include the scheme):
+  ```bash
+  cp tests/example.env tests/.env
+  # edit tests/.env to include TEST_OLLAMA_URL / TEST_OPENAI_URL and optional *_KEY values
+  ```
+- Run the integration suite; it will automatically load `tests/.env` and skip live checks if no endpoints are configured:
+  ```bash
+  pytest tests/test_sources_integration.py -q
+  ```
+
 ## Configuration
 Configuration is stored in `data/config.json` and uses the following shape:
 ```json
@@ -59,4 +79,3 @@ Configuration is stored in `data/config.json` and uses the following shape:
 ## Notes
 - LiteLLM registration is performed via the `/router/model/add` endpoint with the model name discovered from the upstream source.
 - The service uses in-memory state for recent sync results; persistent history is not yet tracked.
-

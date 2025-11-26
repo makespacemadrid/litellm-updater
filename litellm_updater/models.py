@@ -59,24 +59,25 @@ class LitellmTarget(BaseModel):
 def _extract_numeric(raw: Dict, *keys: str) -> int | None:
     """Return the first numeric value found for the given keys in common sections."""
 
-    for key in keys:
-        value = raw.get(key)
-        if isinstance(value, (int, float)):
-            return int(value)
+    def _search(mapping: Dict | None) -> int | None:
+        if not isinstance(mapping, dict):
+            return None
 
-    metadata = raw.get("metadata")
-    if isinstance(metadata, dict):
         for key in keys:
-            value = metadata.get(key)
+            value = mapping.get(key)
             if isinstance(value, (int, float)):
                 return int(value)
 
-    details = raw.get("details")
-    if isinstance(details, dict):
-        for key in keys:
-            value = details.get(key)
-            if isinstance(value, (int, float)):
+        for key, value in mapping.items():
+            if isinstance(value, (int, float)) and any(str(key).endswith(candidate) for candidate in keys):
                 return int(value)
+
+        return None
+
+    for section in (raw, raw.get("metadata"), raw.get("details"), raw.get("model_info")):
+        found = _search(section)
+        if found is not None:
+            return found
 
     return None
 
@@ -108,10 +109,34 @@ def _extract_capabilities(raw: Dict) -> List[str]:
     return deduped
 
 
+def _extract_model_type(model_id: str, raw: Dict, capabilities: List[str]) -> str | None:
+    """Infer a model type such as embeddings or completion from known fields."""
+
+    for key in ("type", "model_type", "task"):
+        value = raw.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    details = raw.get("details")
+    if isinstance(details, dict):
+        for key in ("type", "model_type", "family"):
+            value = details.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+    if capabilities:
+        return capabilities[0]
+
+    if "embed" in model_id.lower():
+        return "embedding"
+    return None
+
+
 class ModelMetadata(BaseModel):
     """Normalized model description."""
 
     id: str
+    model_type: str | None = Field(None, description="Model type such as embeddings or completion")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     context_window: int | None = Field(
         None, description="Maximum input context window (tokens) when provided by the source"
@@ -131,9 +156,11 @@ class ModelMetadata(BaseModel):
         context_window = _extract_numeric(raw, "context_length", "context_window", "max_context")
         max_output_tokens = _extract_numeric(raw, "max_output_tokens", "max_output_length")
         capabilities = _extract_capabilities(raw)
+        model_type = _extract_model_type(model_id, raw, capabilities)
 
         return cls(
             id=model_id,
+            model_type=model_type,
             context_window=context_window,
             max_output_tokens=max_output_tokens,
             capabilities=capabilities,
@@ -169,4 +196,3 @@ class AppConfig(BaseModel):
         if 0 < self.sync_interval_seconds < 30:
             raise ValueError("Sync interval must be at least 30 seconds or 0 to disable")
         return self
-
