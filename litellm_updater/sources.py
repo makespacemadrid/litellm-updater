@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def fetch_ollama_models(client: httpx.AsyncClient, source: SourceEndpoint) -> List[ModelMetadata]:
-    """Fetch models from an Ollama server."""
+    """Fetch models from an Ollama server using the lightweight tags endpoint."""
 
     url = f"{source.normalized_base_url}/api/tags"
     headers = {"Authorization": f"Bearer {source.api_key}"} if source.api_key else {}
@@ -26,26 +26,36 @@ async def fetch_ollama_models(client: httpx.AsyncClient, source: SourceEndpoint)
     results: List[ModelMetadata] = []
     for model in models:
         model_id = model.get("name", "unknown")
-        combined_raw = model
-
-        try:
-            show_response = await client.post(
-                f"{source.normalized_base_url}/api/show",
-                json={"model": model_id, "verbose": True},
-                headers=headers,
-                timeout=timeout,
-            )
-            show_response.raise_for_status()
-            show_payload = show_response.json()
-            if isinstance(show_payload, dict):
-                cleaned_payload = _clean_ollama_payload(show_payload)
-                combined_raw = {**cleaned_payload, "tag": model}
-        except Exception as exc:  # pragma: no cover - debug aid when upstream data is missing
-            logger.debug("Failed fetching Ollama model info for %s: %s", model_id, exc)
-
-        results.append(ModelMetadata.from_raw(model_id, combined_raw))
+        results.append(ModelMetadata.from_raw(model_id, model))
 
     return results
+
+
+async def _fetch_ollama_model_details(
+    client: httpx.AsyncClient, source: SourceEndpoint, model_id: str
+) -> Dict:
+    """Fetch extended model details from Ollama's /api/show endpoint."""
+
+    url = f"{source.normalized_base_url}/api/show"
+    headers = {"Authorization": f"Bearer {source.api_key}"} if source.api_key else {}
+    timeout = httpx.Timeout(30.0, connect=10.0)
+
+    response = await client.post(
+        url,
+        json={"model": model_id, "verbose": True},
+        headers=headers,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return _clean_ollama_payload(payload) if isinstance(payload, dict) else payload
+
+
+async def fetch_ollama_model_details(source: SourceEndpoint, model_id: str) -> Dict:
+    """Convenience wrapper to fetch Ollama model details with a managed client."""
+
+    async with httpx.AsyncClient() as client:
+        return await _fetch_ollama_model_details(client, source, model_id)
 
 
 async def fetch_litellm_models(client: httpx.AsyncClient, source: SourceEndpoint) -> List[ModelMetadata]:
