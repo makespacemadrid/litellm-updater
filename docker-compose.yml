@@ -33,7 +33,7 @@ services:
       com.centurylinklabs.watchtower.enable: "false"
 
   watchtower:
-    image: containrrr/watchtower:latest
+    image: containrrr/watchtower:1.7.1
     command: --interval ${WATCHTOWER_POLL_INTERVAL:-60} --label-enable
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
