@@ -100,6 +100,29 @@
     ].filter(Boolean);
   }
 
+  // Clean JSON by removing null, empty strings, and empty objects/arrays
+  function cleanJSON(obj) {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+
+    if (Array.isArray(obj)) {
+      const cleaned = obj.map(cleanJSON).filter(item => item !== null);
+      return cleaned.length > 0 ? cleaned : null;
+    }
+
+    const cleaned = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = cleanJSON(value);
+      if (cleanedValue !== null && cleanedValue !== '' &&
+          !(Array.isArray(cleanedValue) && cleanedValue.length === 0) &&
+          !(typeof cleanedValue === 'object' && Object.keys(cleanedValue).length === 0)) {
+        cleaned[key] = cleanedValue;
+      }
+    }
+
+    return Object.keys(cleaned).length > 0 ? cleaned : null;
+  }
+
   function describeLitellmModel(litellmModel = {}) {
     const capabilityList = Array.isArray(litellmModel.capabilities) ? litellmModel.capabilities.join(', ') : '';
 
@@ -162,11 +185,13 @@
             </div>
             <div class="model-card__body">${summaryText}</div>
             <div class="model-card__actions">
-              <button type="button" class="model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">Más info</button>
+              <button type="button" class="model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">Ver detalles extendidos</button>
             </div>
-            <details class="model-card__details" hidden>
-              <summary>Detalles extendidos</summary>
-              <pre class="model-card__body"></pre>
+            <details class="model-card__details">
+              <summary style="display: none;"></summary>
+              <div class="model-card__details-content">
+                <pre class="model-card__body"></pre>
+              </div>
             </details>
           </li>
         `;
@@ -211,8 +236,16 @@
         const details = card.querySelector('.model-card__details');
         const target = details.querySelector('pre');
 
-        details.hidden = false;
+        // Toggle details
+        const isOpen = details.open;
+        if (isOpen) {
+          details.open = false;
+          button.textContent = 'Ver detalles extendidos';
+          return;
+        }
+
         details.open = true;
+        button.textContent = 'Ocultar información';
         target.textContent = 'Cargando información...';
 
         try {
@@ -229,15 +262,19 @@
           const litellmMapping = describeLitellmModel(payload?.litellm_model || {});
           const rawDetails = payload?.raw || payload || {};
 
+          // Clean the JSON data
+          const cleanedLitellmModel = cleanJSON(payload?.litellm_model || {});
+          const cleanedRawDetails = cleanJSON(rawDetails);
+
           target.textContent = [
             'Datos mapeables a LiteLLM:',
             litellmMapping,
             '',
             'Modelo normalizado para LiteLLM:',
-            JSON.stringify(payload?.litellm_model || {}, null, 2),
+            JSON.stringify(cleanedLitellmModel, null, 2),
             '',
             'Respuesta completa de Ollama:',
-            JSON.stringify(rawDetails, null, 2),
+            JSON.stringify(cleanedRawDetails, null, 2),
           ].join('\n');
         } catch (error) {
           console.error('Failed loading model details', error);
