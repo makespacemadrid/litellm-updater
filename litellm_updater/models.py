@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -22,7 +22,7 @@ class SourceEndpoint(BaseModel):
     name: str = Field(..., description="Display name for the source")
     base_url: HttpUrl = Field(..., description="Base URL for the upstream server")
     type: SourceType = Field(..., description="Type of the upstream server")
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         None,
         description="Optional API key or bearer token used to authenticate against the source",
     )
@@ -37,10 +37,10 @@ class SourceEndpoint(BaseModel):
 class LitellmTarget(BaseModel):
     """Target LiteLLM proxy configuration."""
 
-    base_url: Optional[HttpUrl] = Field(
+    base_url: HttpUrl | None = Field(
         None, description="LiteLLM base URL. Leave empty to disable synchronization."
     )
-    api_key: Optional[str] = Field(None, description="API key to authenticate LiteLLM admin calls")
+    api_key: str | None = Field(None, description="API key to authenticate LiteLLM admin calls")
 
     @property
     def configured(self) -> bool:
@@ -57,10 +57,10 @@ class LitellmTarget(BaseModel):
         return str(self.base_url).rstrip("/")
 
 
-def _extract_numeric(raw: Dict, *keys: str) -> int | None:
+def _extract_numeric(raw: dict, *keys: str) -> int | None:
     """Return the first numeric value found for the given keys in common sections."""
 
-    def _search(mapping: Dict | None) -> int | None:
+    def _search(mapping: dict | None) -> int | None:
         if not isinstance(mapping, dict):
             return None
 
@@ -89,7 +89,7 @@ def _extract_numeric(raw: Dict, *keys: str) -> int | None:
     return None
 
 
-def _extract_text(raw: Dict, *keys: str) -> str | None:
+def _extract_text(raw: dict, *keys: str) -> str | None:
     """Return the first non-empty string value found for the given keys."""
 
     for section in (
@@ -110,11 +110,11 @@ def _extract_text(raw: Dict, *keys: str) -> str | None:
     return None
 
 
-def _dedupe(values: List[str]) -> List[str]:
+def _dedupe(values: list[str]) -> list[str]:
     """Preserve order while removing duplicates."""
 
     seen = set()
-    deduped: List[str] = []
+    deduped: list[str] = []
     for value in values:
         if value not in seen:
             deduped.append(value)
@@ -122,10 +122,10 @@ def _dedupe(values: List[str]) -> List[str]:
     return deduped
 
 
-def _extract_capabilities(raw: Dict) -> List[str]:
+def _extract_capabilities(raw: dict) -> list[str]:
     """Normalize capability-like fields into a readable list."""
 
-    capabilities: List[str] = []
+    capabilities: list[str] = []
 
     raw_capabilities = raw.get("capabilities")
     if isinstance(raw_capabilities, dict):
@@ -143,10 +143,10 @@ def _extract_capabilities(raw: Dict) -> List[str]:
     return _dedupe(capabilities)
 
 
-def _map_capabilities_to_supports(capabilities: List[str]) -> Dict[str, Any]:
+def _map_capabilities_to_supports(capabilities: list[str]) -> dict[str, Any]:
     """Map capability strings to LiteLLM supports_* boolean fields."""
 
-    supports: Dict[str, Any] = {}
+    supports: dict[str, Any] = {}
 
     cap_lower = [str(c).lower() for c in capabilities]
 
@@ -175,7 +175,7 @@ def _map_capabilities_to_supports(capabilities: List[str]) -> Dict[str, Any]:
     return supports
 
 
-def _extract_model_type(model_id: str, raw: Dict, capabilities: List[str]) -> str | None:
+def _extract_model_type(model_id: str, raw: dict, capabilities: list[str]) -> str | None:
     """Infer a model type such as embeddings or completion from known fields."""
 
     for key in ("type", "model_type", "task"):
@@ -201,7 +201,7 @@ def _extract_model_type(model_id: str, raw: Dict, capabilities: List[str]) -> st
     return None
 
 
-def _ensure_capabilities(model_id: str, capabilities: List[str], model_type: str | None) -> List[str]:
+def _ensure_capabilities(model_id: str, capabilities: list[str], model_type: str | None) -> list[str]:
     """Backfill capabilities using heuristics when upstream data is sparse."""
 
     normalized = list(capabilities)
@@ -243,7 +243,7 @@ def _fallback_context_window(model_id: str, context_window: int | None) -> int |
     return None
 
 
-def _get_default_pricing(model_type: str | None, mode: str | None) -> Dict[str, Any]:
+def _get_default_pricing(model_type: str | None, mode: str | None) -> dict[str, Any]:
     """Get default pricing based on OpenAI GPT-4, Whisper, and DALL-E 3.
 
     Pricing reference (2025):
@@ -252,7 +252,7 @@ def _get_default_pricing(model_type: str | None, mode: str | None) -> Dict[str, 
     - DALL-E 3: $0.08/image (average)
     """
 
-    pricing: Dict[str, Any] = {}
+    pricing: dict[str, Any] = {}
 
     # Determine if this is an audio transcription model
     if mode == "audio_transcription" or (model_type and "audio" in model_type.lower()):
@@ -352,7 +352,7 @@ class ModelMetadata(BaseModel):
 
     id: str
     model_type: str | None = Field(None, description="Model type such as embeddings or completion")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     max_tokens: int | None = Field(None, description="Combined token limit when provided")
     max_input_tokens: int | None = Field(None, description="Maximum input tokens accepted")
     context_window: int | None = Field(
@@ -362,13 +362,13 @@ class ModelMetadata(BaseModel):
         None, description="Maximum output tokens supported when provided by the source"
     )
     mode: str | None = Field(None, description="LiteLLM mode such as chat or embeddings")
-    capabilities: List[str] = Field(
+    capabilities: list[str] = Field(
         default_factory=list, description="Normalized list of model capabilities or modalities"
     )
-    raw: Dict = Field(default_factory=dict, description="Raw metadata returned from the source")
+    raw: dict = Field(default_factory=dict, description="Raw metadata returned from the source")
 
     @classmethod
-    def from_raw(cls, model_id: str, raw: Dict) -> "ModelMetadata":
+    def from_raw(cls, model_id: str, raw: dict) -> "ModelMetadata":
         """Construct a metadata object with normalized context and capability details."""
 
         max_tokens = _extract_numeric(raw, "max_tokens")
@@ -397,10 +397,10 @@ class ModelMetadata(BaseModel):
         )
 
     @property
-    def litellm_mappable(self) -> Dict[str, Any]:
+    def litellm_mappable(self) -> dict[str, Any]:
         """Return LiteLLM-compatible fields from the raw payload, omitting nulls."""
 
-        def _collect(section: Dict | None) -> Dict[str, Any]:
+        def _collect(section: dict | None) -> dict[str, Any]:
             if not isinstance(section, dict):
                 return {}
             return {
@@ -409,7 +409,7 @@ class ModelMetadata(BaseModel):
                 if key in LITELLM_MODEL_FIELDS and value not in (None, "", [], {})
             }
 
-        merged: Dict[str, Any] = {}
+        merged: dict[str, Any] = {}
         for section in (
             self.raw.get("model_info"),
             self.raw.get("details"),
@@ -451,7 +451,7 @@ class ModelMetadata(BaseModel):
 
         return merged
 
-    def _extract_supported_openai_params(self) -> List[str]:
+    def _extract_supported_openai_params(self) -> list[str]:
         """Extract supported OpenAI parameters from Ollama's parameters field."""
 
         params_set = set()
@@ -503,8 +503,8 @@ class SourceModels(BaseModel):
     """Collection of models for a source."""
 
     source: SourceEndpoint
-    models: List[ModelMetadata] = Field(default_factory=list)
-    fetched_at: Optional[datetime] = None
+    models: list[ModelMetadata] = Field(default_factory=list)
+    fetched_at: datetime | None = None
 
 
 class AppConfig(BaseModel):
@@ -513,7 +513,7 @@ class AppConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     litellm: LitellmTarget = Field(default_factory=LitellmTarget)
-    sources: List[SourceEndpoint] = Field(default_factory=list)
+    sources: list[SourceEndpoint] = Field(default_factory=list)
     sync_interval_seconds: int = Field(
         0,
         ge=0,
