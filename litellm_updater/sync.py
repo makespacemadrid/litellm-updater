@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, Dict
+from typing import Callable
 
 import httpx
 
 from .models import AppConfig, ModelMetadata, SourceEndpoint, SourceModels
-from .sources import fetch_source_models
+from .sources import DEFAULT_TIMEOUT, _make_auth_headers, fetch_source_models
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +19,19 @@ async def _register_model_with_litellm(
     """Attempt to register a model with LiteLLM."""
 
     url = f"{litellm_base_url}/router/model/add"
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    headers = _make_auth_headers(api_key)
     payload = {"model_name": model.id}
-    response = await client.post(url, json=payload, headers=headers, timeout=30)
+    response = await client.post(url, json=payload, headers=headers, timeout=DEFAULT_TIMEOUT)
     response.raise_for_status()
 
 
-async def sync_once(config: AppConfig) -> Dict[str, SourceModels]:
+async def sync_once(config: AppConfig) -> dict[str, SourceModels]:
     """Run a single synchronization loop.
 
     Returns mapping from source name to fetched models.
     """
 
-    results: Dict[str, SourceModels] = {}
+    results: dict[str, SourceModels] = {}
     async with httpx.AsyncClient() as client:
         for source in config.sources:
             try:
@@ -45,8 +45,11 @@ async def sync_once(config: AppConfig) -> Dict[str, SourceModels]:
                     exc,
                 )
                 continue
-            except Exception as exc:  # pragma: no cover - runtime logging
-                logger.exception("Failed syncing source %s: %s", source.name, exc)
+            except ValueError as exc:  # pragma: no cover - invalid JSON or data
+                logger.warning("Invalid response from source %s: %s", source.name, exc)
+                continue
+            except Exception:  # pragma: no cover - unexpected errors
+                logger.exception("Unexpected error syncing source %s", source.name)
                 continue
 
             if not config.litellm.configured:
@@ -66,8 +69,8 @@ async def sync_once(config: AppConfig) -> Dict[str, SourceModels]:
                     logger.warning(
                         "Failed reaching LiteLLM at %s: %s", config.litellm.base_url, exc
                     )
-                except Exception as exc:  # pragma: no cover - runtime logging
-                    logger.exception("Unexpected error registering model %s from %s: %s", model.id, source.name, exc)
+                except Exception:  # pragma: no cover - unexpected errors
+                    logger.exception("Unexpected error registering model %s from %s", model.id, source.name)
     return results
 
 
@@ -78,8 +81,12 @@ async def start_scheduler(config_loader: Callable[[], AppConfig], store_callback
     while True:
         try:
             config = config_loader()
-        except Exception as exc:  # pragma: no cover - runtime logging
-            logger.exception("Failed loading config: %s", exc)
+        except (OSError, ValueError, RuntimeError) as exc:  # pragma: no cover - config errors
+            logger.error("Failed loading config: %s", exc)
+            await asyncio.sleep(60)
+            continue
+        except Exception:  # pragma: no cover - unexpected errors
+            logger.exception("Unexpected error loading config")
             await asyncio.sleep(60)
             continue
 
@@ -90,9 +97,9 @@ async def start_scheduler(config_loader: Callable[[], AppConfig], store_callback
 
         try:
             results = await sync_once(config)
-            store_callback(results)
-        except Exception as exc:  # pragma: no cover - runtime logging
-            logger.exception("Sync loop failed: %s", exc)
+            await store_callback(results)
+        except Exception:  # pragma: no cover - unexpected errors
+            logger.exception("Sync loop failed")
 
         await asyncio.sleep(config.sync_interval_seconds)
 

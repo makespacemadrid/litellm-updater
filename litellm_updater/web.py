@@ -4,8 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timedelta
-from typing import Dict, Tuple
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -43,16 +42,27 @@ class SyncState:
     """In-memory store for the latest synchronization results."""
 
     def __init__(self) -> None:
-        self.models: Dict[str, SourceModels] = {}
+        self.models: dict[str, SourceModels] = {}
         self.last_synced: datetime | None = None
+        self._lock = asyncio.Lock()
 
-    def update(self, results: Dict[str, SourceModels]) -> None:
-        self.models = results
-        self.last_synced = datetime.utcnow()
+    async def update(self, results: dict[str, SourceModels]) -> None:
+        async with self._lock:
+            self.models = results
+            self.last_synced = datetime.now(UTC)
 
-    def update_source(self, source_name: str, source_models: SourceModels) -> None:
-        self.models[source_name] = source_models
-        self.last_synced = datetime.utcnow()
+    async def update_source(self, source_name: str, source_models: SourceModels) -> None:
+        async with self._lock:
+            self.models[source_name] = source_models
+            self.last_synced = datetime.now(UTC)
+
+    async def get_models(self) -> dict[str, SourceModels]:
+        async with self._lock:
+            return self.models.copy()
+
+    async def get_last_synced(self) -> datetime | None:
+        async with self._lock:
+            return self.last_synced
 
 
 sync_state = SyncState()
@@ -61,26 +71,38 @@ sync_state = SyncState()
 class ModelDetailsCache:
     """In-memory cache for Ollama model details to avoid repeated /api/show calls."""
 
-    def __init__(self, ttl_seconds: int = 600) -> None:
+    def __init__(self, ttl_seconds: int = 600, max_size: int = 1000) -> None:
         self.ttl = timedelta(seconds=ttl_seconds)
-        self._entries: Dict[Tuple[str, str], Tuple[datetime, Dict]] = {}
+        self.max_size = max_size
+        self._entries: dict[tuple[str, str], tuple[datetime, dict]] = {}
+        self._lock = asyncio.Lock()
 
-    def get(self, source_name: str, model_id: str) -> Dict | None:
-        key = (source_name, model_id)
-        cached = self._entries.get(key)
-        if not cached:
-            return None
+    async def get(self, source_name: str, model_id: str) -> dict | None:
+        async with self._lock:
+            key = (source_name, model_id)
+            cached = self._entries.get(key)
+            if not cached:
+                return None
 
-        stored_at, payload = cached
-        if datetime.utcnow() - stored_at > self.ttl:
-            self._entries.pop(key, None)
-            return None
+            stored_at, payload = cached
+            if datetime.now(UTC) - stored_at > self.ttl:
+                self._entries.pop(key, None)
+                return None
 
-        return payload
+            return payload
 
-    def set(self, source_name: str, model_id: str, payload: Dict) -> None:
-        key = (source_name, model_id)
-        self._entries[key] = (datetime.utcnow(), payload)
+    async def set(self, source_name: str, model_id: str, payload: dict) -> None:
+        async with self._lock:
+            key = (source_name, model_id)
+            self._entries[key] = (datetime.now(UTC), payload)
+
+            # Evict oldest entries if cache exceeds max size
+            if len(self._entries) > self.max_size:
+                # Remove the oldest 10% of entries
+                sorted_entries = sorted(self._entries.items(), key=lambda x: x[1][0])
+                entries_to_remove = int(self.max_size * 0.1)
+                for entry_key, _ in sorted_entries[:entries_to_remove]:
+                    self._entries.pop(entry_key, None)
 
 
 model_details_cache = ModelDetailsCache()
@@ -96,9 +118,15 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        logger.info("Shutting down scheduler gracefully...")
         task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        try:
+            # Wait up to 10 seconds for graceful shutdown
+            await asyncio.wait_for(task, timeout=10.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            logger.info("Scheduler shutdown complete")
+        except Exception:
+            logger.exception("Unexpected error during scheduler shutdown")
 
 
 def create_app() -> FastAPI:
@@ -109,12 +137,13 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         config = load_config()
+        last_synced = await sync_state.get_last_synced()
         return templates.TemplateResponse(
             "index.html",
             {
                 "request": request,
                 "config": config,
-                "sync_state": sync_state,
+                "last_synced": last_synced,
                 "human_source_type": _human_source_type,
             },
         )
@@ -122,14 +151,15 @@ def create_app() -> FastAPI:
     @app.get("/providers", response_class=HTMLResponse)
     async def providers_page(request: Request):
         config = load_config()
-        models = sync_state.models
+        models = await sync_state.get_models()
+        last_synced = await sync_state.get_last_synced()
         return templates.TemplateResponse(
             "providers.html",
             {
                 "request": request,
                 "config": config,
                 "models": models,
-                "last_synced": sync_state.last_synced,
+                "last_synced": last_synced,
                 "human_source_type": _human_source_type,
             },
         )
@@ -150,10 +180,11 @@ def create_app() -> FastAPI:
         if not prefers_json:
             return RedirectResponse(url="/providers", status_code=308)
 
+        models = await sync_state.get_models()
         if source:
-            return sync_state.models.get(source) or {}
+            return models.get(source) or {}
 
-        return sync_state.models
+        return models
 
     @app.get("/models/show")
     async def model_details(source: str, model: str):
@@ -168,7 +199,7 @@ def create_app() -> FastAPI:
         if not source_endpoint or source_endpoint.type is not SourceType.OLLAMA:
             raise HTTPException(status_code=404, detail="Source not found or unsupported")
 
-        cached = model_details_cache.get(source_endpoint.name, model)
+        cached = await model_details_cache.get(source_endpoint.name, model)
         if cached:
             return cached
 
@@ -178,11 +209,11 @@ def create_app() -> FastAPI:
             payload = {
                 "source": source_endpoint.name,
                 "model": model,
-                "fetched_at": datetime.utcnow(),
+                "fetched_at": datetime.now(UTC),
                 "litellm_model": litellm_model,
                 "raw": raw_details,
             }
-            model_details_cache.set(source_endpoint.name, model, payload)
+            await model_details_cache.set(source_endpoint.name, model, payload)
             return payload
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
@@ -207,10 +238,13 @@ def create_app() -> FastAPI:
         if config.litellm.configured:
             try:
                 litellm_models = await fetch_litellm_target_models(config.litellm)
-                fetched_at = datetime.utcnow()
-            except Exception as exc:  # pragma: no cover - runtime logging
-                logger.exception("Failed fetching LiteLLM models: %s", exc)
+                fetched_at = datetime.now(UTC)
+            except (httpx.HTTPError, ValueError) as exc:  # pragma: no cover - runtime logging
+                logger.exception("Failed fetching LiteLLM models")
                 litellm_error = str(exc)
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                logger.exception("Unexpected error fetching LiteLLM models")
+                litellm_error = f"Unexpected error: {type(exc).__name__}"
         else:
             litellm_error = "LiteLLM target is not configured."
 
@@ -260,9 +294,11 @@ def create_app() -> FastAPI:
         config = load_config()
         try:
             results = await sync_once(config)
-            sync_state.update(results)
-        except Exception:  # pragma: no cover - defensive logging for manual runs
-            logger.exception("Manual sync failed")
+            await sync_state.update(results)
+        except (httpx.HTTPError, ValueError) as exc:  # pragma: no cover - expected errors
+            logger.warning("Manual sync failed: %s", exc)
+        except Exception:  # pragma: no cover - unexpected errors
+            logger.exception("Unexpected error during manual sync")
         return RedirectResponse(url="/providers", status_code=303)
 
     @app.post("/providers/refresh")
@@ -275,13 +311,15 @@ def create_app() -> FastAPI:
 
         try:
             models = await fetch_source_models(source)
-            sync_state.update_source(name, models)
+            await sync_state.update_source(name, models)
         except httpx.RequestError as exc:  # pragma: no cover - runtime logging
             logger.warning(
                 "Failed refreshing models for %s at %s: %s", name, source.base_url, exc
             )
-        except Exception:  # pragma: no cover - runtime logging for diagnostics
-            logger.exception("Failed refreshing models for %s", name)
+        except ValueError as exc:  # pragma: no cover - invalid JSON or data
+            logger.warning("Invalid response from %s: %s", name, exc)
+        except Exception:  # pragma: no cover - unexpected errors
+            logger.exception("Unexpected error refreshing models for %s", name)
 
         return RedirectResponse(url="/providers", status_code=303)
 
@@ -290,8 +328,8 @@ def create_app() -> FastAPI:
         return load_config()
 
     @app.get("/api/models")
-    async def api_models() -> Dict[str, SourceModels]:
-        return sync_state.models
+    async def api_models() -> dict[str, SourceModels]:
+        return await sync_state.get_models()
 
     return app
 

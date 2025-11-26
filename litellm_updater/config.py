@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 from pydantic import ValidationError
 
@@ -21,7 +20,16 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         save_config(DEFAULT_CONFIG, path)
         return DEFAULT_CONFIG
 
-    data = json.loads(path.read_text())
+    try:
+        config_text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError(f"Failed to read config file {path}: {exc}") from exc
+
+    try:
+        data = json.loads(config_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON in config file {path}: {exc}") from exc
+
     try:
         return AppConfig.model_validate(data)
     except ValidationError as exc:  # pragma: no cover - defensive
@@ -31,9 +39,17 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
 def save_config(config: AppConfig, path: Path = DEFAULT_CONFIG_PATH) -> None:
     """Persist the app configuration to disk."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Use JSON-compatible output so URL fields (HttpUrl) are serialized as strings
-    path.write_text(json.dumps(config.model_dump(mode="json"), indent=2))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to create directory {path.parent}: {exc}") from exc
+
+    try:
+        # Use JSON-compatible output so URL fields (HttpUrl) are serialized as strings
+        config_json = json.dumps(config.model_dump(mode="json"), indent=2)
+        path.write_text(config_json, encoding="utf-8")
+    except (OSError, TypeError) as exc:
+        raise RuntimeError(f"Failed to write config file {path}: {exc}") from exc
 
 
 def add_source(endpoint: SourceEndpoint, path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
