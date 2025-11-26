@@ -70,20 +70,23 @@
         {% endif %}
       </div>
       <div class="model-card__actions">
-        <button type="button" class="toggle-details" data-target="details-{{ loop.index0 }}">
+        <button type="button" class="toggle-details" data-index="{{ loop.index0 }}">
           Ver parámetros LiteLLM
         </button>
       </div>
-      <div class="model-card__details" id="details-{{ loop.index0 }}" hidden>
-        <p class="muted">Parámetros mapeables a la definición de LiteLLM:</p>
-        {% if mappable %}
-        <pre class="model-card__body">{{ mappable | tojson(indent=2) }}</pre>
-        {% else %}
-        <p class="muted">No se encontraron parámetros específicos de LiteLLM en la respuesta.</p>
-        {% endif %}
-        <p class="muted">Respuesta completa del endpoint:</p>
-        <pre class="model-card__body">{{ model.raw | tojson(indent=2) }}</pre>
-      </div>
+      <details class="model-card__details">
+        <summary style="display: none;"></summary>
+        <div class="model-card__details-content">
+          <p class="muted">Parámetros mapeables a la definición de LiteLLM:</p>
+          {% if mappable %}
+          <pre class="model-card__body" data-type="mappable"></pre>
+          {% else %}
+          <p class="muted">No se encontraron parámetros específicos de LiteLLM en la respuesta.</p>
+          {% endif %}
+          <p class="muted">Respuesta completa del endpoint:</p>
+          <pre class="model-card__body" data-type="raw"></pre>
+        </div>
+      </details>
     </li>
     {% endfor %}
   </ul>
@@ -93,19 +96,64 @@
   {% endif %}
 </section>
 <script>
+  // Store model data for display
+  const modelData = [
+    {% for model in litellm_models %}
+    {
+      mappable: {{ model.litellm_mappable | tojson | safe }},
+      raw: {{ model.raw | tojson | safe }}
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
+
+  // Clean JSON by removing null, empty strings, and empty objects/arrays
+  function cleanJSON(obj) {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+
+    if (Array.isArray(obj)) {
+      const cleaned = obj.map(cleanJSON).filter(item => item !== null);
+      return cleaned.length > 0 ? cleaned : null;
+    }
+
+    const cleaned = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = cleanJSON(value);
+      if (cleanedValue !== null && cleanedValue !== '' &&
+          !(Array.isArray(cleanedValue) && cleanedValue.length === 0) &&
+          !(typeof cleanedValue === 'object' && Object.keys(cleanedValue).length === 0)) {
+        cleaned[key] = cleanedValue;
+      }
+    }
+
+    return Object.keys(cleaned).length > 0 ? cleaned : null;
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.toggle-details').forEach((button) => {
       button.addEventListener('click', () => {
-        const targetId = button.dataset.target;
-        const container = document.getElementById(targetId);
-        if (!container) return;
+        const index = parseInt(button.dataset.index);
+        const card = button.closest('.model-card');
+        const details = card.querySelector('.model-card__details');
+        const mappablePre = card.querySelector('pre[data-type="mappable"]');
+        const rawPre = card.querySelector('pre[data-type="raw"]');
 
-        const isHidden = container.hasAttribute('hidden');
-        if (isHidden) {
-          container.removeAttribute('hidden');
+        // Toggle details
+        const isOpen = details.open;
+        if (!isOpen) {
+          // Populate with cleaned JSON when opening
+          if (mappablePre && modelData[index]) {
+            const cleanedMappable = cleanJSON(modelData[index].mappable);
+            mappablePre.textContent = JSON.stringify(cleanedMappable, null, 2);
+          }
+          if (rawPre && modelData[index]) {
+            const cleanedRaw = cleanJSON(modelData[index].raw);
+            rawPre.textContent = JSON.stringify(cleanedRaw, null, 2);
+          }
+          details.open = true;
           button.textContent = 'Ocultar información';
         } else {
-          container.setAttribute('hidden', '');
+          details.open = false;
           button.textContent = 'Ver parámetros LiteLLM';
         }
       });

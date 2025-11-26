@@ -149,8 +149,20 @@ select {
 
 .model-card__details {
   margin-top: 0.5rem;
+}
+
+.model-card__details[open] {
+  display: block;
+}
+
+.model-card__details:not([open]) {
+  display: none;
+}
+
+.model-card__details-content {
   display: grid;
   gap: 0.35rem;
+  margin-top: 0.5rem;
 }
 
 .sources ul {
