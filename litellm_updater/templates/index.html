@@ -12,8 +12,8 @@
   {% else %}
   <p>Automatic synchronization is <strong>disabled</strong>.</p>
   {% endif %}
-  {% if sync_state.last_synced %}
-  <p>Last synced at {{ sync_state.last_synced }}</p>
+  {% if last_synced %}
+  <p>Last synced at {{ last_synced }}</p>
   {% else %}
   <p>No sync has completed yet.</p>
   {% endif %}
