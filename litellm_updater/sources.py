@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
 import httpx
 
@@ -38,7 +38,8 @@ async def fetch_ollama_models(client: httpx.AsyncClient, source: SourceEndpoint)
             show_response.raise_for_status()
             show_payload = show_response.json()
             if isinstance(show_payload, dict):
-                combined_raw = {**show_payload, "tag": model}
+                cleaned_payload = _clean_ollama_payload(show_payload)
+                combined_raw = {**cleaned_payload, "tag": model}
         except Exception as exc:  # pragma: no cover - debug aid when upstream data is missing
             logger.debug("Failed fetching Ollama model info for %s: %s", model_id, exc)
 
@@ -107,3 +108,27 @@ async def fetch_source_models(source: SourceEndpoint) -> SourceModels:
             raise ValueError(f"Unsupported source type: {source.type}")
 
     return SourceModels(source=source, models=models, fetched_at=datetime.utcnow())
+def _clean_ollama_payload(payload: Dict) -> Dict:
+    """Remove extremely large or redundant fields from Ollama responses.
+
+    The `/api/show` endpoint can include tensors and the full modelfile content,
+    which are not required for synchronization and can bloat the stored
+    metadata. This helper returns a sanitized copy while leaving the original
+    payload untouched.
+    """
+
+    if not isinstance(payload, dict):
+        return payload
+
+    cleaned = {**payload}
+    for field in ("tensors", "license", "licence", "modelfile"):
+        cleaned.pop(field, None)
+
+    model_info = cleaned.get("model_info")
+    if isinstance(model_info, dict):
+        model_info = {**model_info}
+        model_info.pop("tensors", None)
+        cleaned["model_info"] = model_info
+
+    return cleaned
+
