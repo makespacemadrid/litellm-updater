@@ -45,6 +45,8 @@ A small FastAPI service for synchronizing models from Ollama or other LiteLLM/Op
   docker-compose --env-file .env up --build
   ```
   The compose file binds the UI to `${PORT:-8000}` for both the host and container, and mounts the local `data/` directory so configuration persists across restarts.
+  An `env-sync` helper service runs before the app to append any new variables from the container's `env.example` into your local `.env` without overwriting existing values.
+  The stack also includes a `watchtower` container that checks for image updates every `${WATCHTOWER_POLL_INTERVAL:-60}` seconds (configurable via `.env`) and only acts on services labeled for updates.
 
 ## Running integration tests
 - Create a virtual environment if you do not already have one:

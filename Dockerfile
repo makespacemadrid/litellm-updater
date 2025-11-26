@@ -10,6 +10,8 @@ WORKDIR /app
 COPY pyproject.toml README.md /app/
 COPY litellm_updater /app/litellm_updater
 COPY data /app/data
+COPY example.env /app/env.example
+COPY scripts /app/scripts
 
 RUN pip install --no-cache-dir .
 
