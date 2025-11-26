@@ -94,6 +94,18 @@
     ].filter(Boolean);
   }
 
+  function describeLitellmModel(litellmModel = {}) {
+    const capabilityList = Array.isArray(litellmModel.capabilities) ? litellmModel.capabilities.join(', ') : '';
+    const parts = [
+      litellmModel.model_type ? `Tipo: ${litellmModel.model_type}` : null,
+      litellmModel.context_window ? `Contexto: ${litellmModel.context_window.toLocaleString()} tokens` : null,
+      litellmModel.max_output_tokens ? `Salida máxima: ${litellmModel.max_output_tokens.toLocaleString()} tokens` : null,
+      capabilityList ? `Capacidades: ${capabilityList}` : null,
+    ].filter(Boolean);
+
+    return parts.length > 0 ? parts.join(' · ') : 'No se encontraron campos compatibles con LiteLLM.';
+  }
+
   function renderModels(container, sourceModels) {
     const content = container.querySelector('.models-content');
     const lastSynced = container.dataset.lastSynced;
@@ -188,7 +200,19 @@
           }
 
           const payload = await response.json();
-          target.textContent = JSON.stringify(payload || {}, null, 2);
+          const litellmMapping = describeLitellmModel(payload?.litellm_model || {});
+          const rawDetails = payload?.raw || payload || {};
+
+          target.textContent = [
+            'Datos mapeables a LiteLLM:',
+            litellmMapping,
+            '',
+            'Modelo normalizado para LiteLLM:',
+            JSON.stringify(payload?.litellm_model || {}, null, 2),
+            '',
+            'Respuesta completa de Ollama:',
+            JSON.stringify(rawDetails, null, 2),
+          ].join('\n');
         } catch (error) {
           console.error('Failed loading model details', error);
           target.textContent = 'No se pudo cargar la información extendida.';

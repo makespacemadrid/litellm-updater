@@ -4,8 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime
-from typing import Dict
+from datetime import datetime, timedelta
+from typing import Dict, Tuple
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -21,7 +21,14 @@ from .config import (
     set_sync_interval,
     update_litellm_target,
 )
-from .models import AppConfig, LitellmTarget, SourceEndpoint, SourceModels, SourceType
+from .models import (
+    AppConfig,
+    LitellmTarget,
+    ModelMetadata,
+    SourceEndpoint,
+    SourceModels,
+    SourceType,
+)
 from .sources import (
     fetch_litellm_target_models,
     fetch_ollama_model_details,
@@ -49,6 +56,34 @@ class SyncState:
 
 
 sync_state = SyncState()
+
+
+class ModelDetailsCache:
+    """In-memory cache for Ollama model details to avoid repeated /api/show calls."""
+
+    def __init__(self, ttl_seconds: int = 600) -> None:
+        self.ttl = timedelta(seconds=ttl_seconds)
+        self._entries: Dict[Tuple[str, str], Tuple[datetime, Dict]] = {}
+
+    def get(self, source_name: str, model_id: str) -> Dict | None:
+        key = (source_name, model_id)
+        cached = self._entries.get(key)
+        if not cached:
+            return None
+
+        stored_at, payload = cached
+        if datetime.utcnow() - stored_at > self.ttl:
+            self._entries.pop(key, None)
+            return None
+
+        return payload
+
+    def set(self, source_name: str, model_id: str, payload: Dict) -> None:
+        key = (source_name, model_id)
+        self._entries[key] = (datetime.utcnow(), payload)
+
+
+model_details_cache = ModelDetailsCache()
 
 
 def _human_source_type(source_type: SourceType) -> str:
@@ -133,8 +168,22 @@ def create_app() -> FastAPI:
         if not source_endpoint or source_endpoint.type is not SourceType.OLLAMA:
             raise HTTPException(status_code=404, detail="Source not found or unsupported")
 
+        cached = model_details_cache.get(source_endpoint.name, model)
+        if cached:
+            return cached
+
         try:
-            return await fetch_ollama_model_details(source_endpoint, model)
+            raw_details = await fetch_ollama_model_details(source_endpoint, model)
+            litellm_model = ModelMetadata.from_raw(model, raw_details)
+            payload = {
+                "source": source_endpoint.name,
+                "model": model,
+                "fetched_at": datetime.utcnow(),
+                "litellm_model": litellm_model,
+                "raw": raw_details,
+            }
+            model_details_cache.set(source_endpoint.name, model, payload)
+            return payload
         except httpx.HTTPStatusError as exc:
             raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
         except httpx.RequestError as exc:
