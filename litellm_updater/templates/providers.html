@@ -10,38 +10,49 @@
         <h3>{{ source.name }}</h3>
         <p class="muted">{{ human_source_type(source.type) }} — {{ source.base_url }}</p>
       </div>
-      <form action="/providers/refresh" method="post">
-        <input type="hidden" name="name" value="{{ source.name }}" />
-        <button type="submit">Refresh list</button>
-      </form>
+      <div class="source-actions">
+        <form action="/providers/refresh" method="post" class="refresh-form">
+          <input type="hidden" name="name" value="{{ source.name }}" />
+          <button type="submit">Refresh list</button>
+        </form>
+        <button type="button" class="extra-button" data-source-name="{{ source.name }}">Query extra data</button>
+      </div>
     </div>
     {% set source_models = models.get(source.name) %}
-    {% if source_models %}
-    <p class="muted">Last fetched at {{ source_models.fetched_at or last_synced }}</p>
-    <ul class="model-cards">
-      {% for model in source_models.models %}
-      <li class="model-card">
-        <div class="model-card__header">
-          <div>{{ model.id }}</div>
-          <div class="model-card__meta">
-            {% if model.context_window %}
-            <span class="badge">Ctx: {{ "{:,}".format(model.context_window) }} tokens</span>
-            {% endif %}
-            {% if model.max_output_tokens %}
-            <span class="badge">Max output: {{ "{:,}".format(model.max_output_tokens) }} tokens</span>
-            {% endif %}
-            {% if model.capabilities %}
-            <span class="badge">Capabilities: {{ model.capabilities | join(", ") }}</span>
-            {% endif %}
-          </div>
-        </div>
-        <pre class="model-card__body">{{ model.raw | tojson(indent=2) }}</pre>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="muted">No models fetched yet for this provider.</p>
-    {% endif %}
+    <div class="models-area" data-source-name="{{ source.name }}" data-last-synced="{{ last_synced }}">
+      <div class="models-content">
+        {% if source_models %}
+        <p class="muted">Last fetched at {{ source_models.fetched_at or last_synced }}</p>
+        <ul class="model-cards">
+          {% for model in source_models.models %}
+          <li class="model-card">
+            <div class="model-card__header">
+              <div>{{ model.id }}</div>
+              <div class="model-card__meta">
+                {% if model.context_window %}
+                <span class="badge">Ctx: {{ "{:,}".format(model.context_window) }} tokens</span>
+                {% endif %}
+                {% if model.max_output_tokens %}
+                <span class="badge">Max output: {{ "{:,}".format(model.max_output_tokens) }} tokens</span>
+                {% endif %}
+                {% if model.capabilities %}
+                <span class="badge">Capabilities: {{ model.capabilities | join(", ") }}</span>
+                {% endif %}
+              </div>
+            </div>
+            <pre class="model-card__body">{{ model.raw | tojson(indent=2) }}</pre>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No models fetched yet for this provider.</p>
+        {% endif %}
+      </div>
+      <details class="extra-output" hidden>
+        <summary>Extra data</summary>
+        <pre class="model-card__body"></pre>
+      </details>
+    </div>
   </div>
   {% endfor %}
   {% else %}
@@ -53,4 +64,101 @@
     <button type="submit">Run sync now</button>
   </form>
 </section>
+<script>
+  const modelsEndpoint = '/models';
+
+  function renderModels(container, sourceModels) {
+    const content = container.querySelector('.models-content');
+    const lastSynced = container.dataset.lastSynced;
+
+    if (!sourceModels || !Array.isArray(sourceModels.models) || sourceModels.models.length === 0) {
+      content.innerHTML = '<p class="muted">No models fetched yet for this provider.</p>';
+      return;
+    }
+
+    const fetchedAt = sourceModels.fetched_at || lastSynced || '';
+    const items = sourceModels.models
+      .map((model) => {
+        const ctx = model.context_window ? `Ctx: ${model.context_window.toLocaleString()} tokens` : '';
+        const maxOut = model.max_output_tokens ? `Max output: ${model.max_output_tokens.toLocaleString()} tokens` : '';
+        const caps = Array.isArray(model.capabilities) && model.capabilities.length > 0 ? `Capabilities: ${model.capabilities.join(', ')}` : '';
+        const badges = [ctx, maxOut, caps]
+          .filter(Boolean)
+          .map((badge) => `<span class="badge">${badge}</span>`) // badges already formatted
+          .join('');
+
+        const raw = model.raw ? JSON.stringify(model.raw, null, 2) : '';
+        return `
+          <li class="model-card">
+            <div class="model-card__header">
+              <div>${model.id}</div>
+              <div class="model-card__meta">${badges}</div>
+            </div>
+            <pre class="model-card__body">${raw}</pre>
+          </li>
+        `;
+      })
+      .join('');
+
+    content.innerHTML = `
+      <p class="muted">Last fetched at ${fetchedAt}</p>
+      <ul class="model-cards">${items}</ul>
+    `;
+  }
+
+  async function loadModels() {
+    try {
+      const response = await fetch(modelsEndpoint, { headers: { Accept: 'application/json' } });
+      if (!response.ok) return;
+
+      const payload = await response.json();
+      document.querySelectorAll('.models-area').forEach((container) => {
+        const sourceName = container.dataset.sourceName;
+        renderModels(container, payload[sourceName]);
+      });
+    } catch (error) {
+      console.error('Failed loading models', error);
+    }
+  }
+
+  async function refreshSource(form) {
+    const formData = new FormData(form);
+    await fetch(form.action, { method: 'POST', body: formData });
+    await loadModels();
+  }
+
+  async function loadExtraData(sourceName, container) {
+    try {
+      const response = await fetch(`${modelsEndpoint}?source=${encodeURIComponent(sourceName)}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) return;
+
+      const payload = await response.json();
+      const details = container.querySelector('.extra-output');
+      const target = details.querySelector('pre');
+      target.textContent = JSON.stringify(payload || {}, null, 2);
+      details.hidden = false;
+    } catch (error) {
+      console.error('Failed loading extra data', error);
+    }
+  }
+
+  document.querySelectorAll('.refresh-form').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await refreshSource(form);
+    });
+  });
+
+  document.querySelectorAll('.extra-button').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const sourceName = button.dataset.sourceName;
+      const container = button.closest('.source-block').querySelector('.models-area');
+      await loadExtraData(sourceName, container);
+    });
+  });
+
+  document.addEventListener('DOMContentLoaded', loadModels);
+</script>
 {% endblock %}

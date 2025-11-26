@@ -95,9 +95,26 @@ def create_app() -> FastAPI:
             },
         )
 
-    @app.get("/models", response_class=HTMLResponse)
-    async def models_redirect():
-        return RedirectResponse(url="/providers", status_code=308)
+    @app.get("/models")
+    async def models_endpoint(request: Request, source: str | None = None):
+        """Expose the latest synced models or redirect browsers to the UI.
+
+        When the request prefers HTML (e.g. a user navigating directly in a
+        browser), redirect to the providers page to keep the existing UX. API
+        consumers can request JSON to retrieve the in-memory models, optionally
+        filtered by source name.
+        """
+
+        accepts = request.headers.get("accept", "")
+        prefers_json = "application/json" in accepts or "*/*" == accepts
+
+        if not prefers_json:
+            return RedirectResponse(url="/providers", status_code=308)
+
+        if source:
+            return sync_state.models.get(source) or {}
+
+        return sync_state.models
 
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_page(request: Request):
