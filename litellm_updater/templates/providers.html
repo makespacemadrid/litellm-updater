@@ -15,7 +15,6 @@
           <input type="hidden" name="name" value="{{ source.name }}" />
           <button type="submit">Refresh list</button>
         </form>
-        <button type="button" class="extra-button" data-source-name="{{ source.name }}">Query extra data</button>
       </div>
     </div>
     {% set source_models = models.get(source.name) %}
@@ -40,7 +39,7 @@
                 {% endif %}
               </div>
             </div>
-            <pre class="model-card__body">{{ model.raw | tojson(indent=2) }}</pre>
+            <div class="model-card__body">Metadata fetched from tags.</div>
           </li>
           {% endfor %}
         </ul>
@@ -48,10 +47,6 @@
         <p class="muted">No models fetched yet for this provider.</p>
         {% endif %}
       </div>
-      <details class="extra-output" hidden>
-        <summary>Extra data</summary>
-        <pre class="model-card__body"></pre>
-      </details>
     </div>
   </div>
   {% endfor %}
@@ -66,6 +61,38 @@
 </section>
 <script>
   const modelsEndpoint = '/models';
+  const modelDetailsEndpoint = '/models/show';
+
+  function formatBytes(bytes) {
+    if (!Number.isFinite(bytes)) return null;
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+    return `${size.toFixed(size >= 10 || size % 1 === 0 ? 0 : 1)} ${units[unitIndex]}`;
+  }
+
+  function buildTagSummary(raw = {}) {
+    const details = raw.details || {};
+    const modifiedAt = raw.modified_at ? new Date(raw.modified_at).toLocaleString() : null;
+    const sizeLabel = formatBytes(raw.size);
+    const families = Array.isArray(details.families) && details.families.length
+      ? `Familias: ${details.families.join(', ')}`
+      : null;
+
+    return [
+      details.parameter_size ? `Parámetros: ${details.parameter_size}` : null,
+      details.quantization ? `Cuantización: ${details.quantization}` : null,
+      sizeLabel ? `Tamaño: ${sizeLabel}` : null,
+      modifiedAt ? `Actualizado: ${modifiedAt}` : null,
+      families,
+      details.family ? `Familia principal: ${details.family}` : null,
+      raw.digest ? `Digest: ${raw.digest}` : null,
+    ].filter(Boolean);
+  }
 
   function renderModels(container, sourceModels) {
     const content = container.querySelector('.models-content');
@@ -82,19 +109,27 @@
         const ctx = model.context_window ? `Ctx: ${model.context_window.toLocaleString()} tokens` : '';
         const maxOut = model.max_output_tokens ? `Max output: ${model.max_output_tokens.toLocaleString()} tokens` : '';
         const caps = Array.isArray(model.capabilities) && model.capabilities.length > 0 ? `Capabilities: ${model.capabilities.join(', ')}` : '';
-        const badges = [ctx, maxOut, caps]
+        const tagSummary = buildTagSummary(model.raw);
+        const badges = [ctx, maxOut, caps, ...tagSummary]
           .filter(Boolean)
-          .map((badge) => `<span class="badge">${badge}</span>`) // badges already formatted
+          .map((badge) => `<span class="badge">${badge}</span>`)
           .join('');
 
-        const raw = model.raw ? JSON.stringify(model.raw, null, 2) : '';
+        const summaryText = tagSummary.length > 0 ? tagSummary.join(' · ') : 'Metadatos básicos no disponibles en /api/tags.';
         return `
           <li class="model-card">
             <div class="model-card__header">
               <div>${model.id}</div>
               <div class="model-card__meta">${badges}</div>
             </div>
-            <pre class="model-card__body">${raw}</pre>
+            <div class="model-card__body">${summaryText}</div>
+            <div class="model-card__actions">
+              <button type="button" class="model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">Más info</button>
+            </div>
+            <details class="model-card__details" hidden>
+              <summary>Detalles extendidos</summary>
+              <pre class="model-card__body"></pre>
+            </details>
           </li>
         `;
       })
@@ -104,6 +139,8 @@
       <p class="muted">Last fetched at ${fetchedAt}</p>
       <ul class="model-cards">${items}</ul>
     `;
+
+    bindModelDetails(container);
   }
 
   async function loadModels() {
@@ -127,35 +164,43 @@
     await loadModels();
   }
 
-  async function loadExtraData(sourceName, container) {
-    try {
-      const response = await fetch(`${modelsEndpoint}?source=${encodeURIComponent(sourceName)}`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) return;
+  function bindModelDetails(container) {
+    container.querySelectorAll('.model-more-info').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const sourceName = button.dataset.sourceName;
+        const modelId = button.dataset.modelId;
+        const card = button.closest('.model-card');
+        const details = card.querySelector('.model-card__details');
+        const target = details.querySelector('pre');
 
-      const payload = await response.json();
-      const details = container.querySelector('.extra-output');
-      const target = details.querySelector('pre');
-      target.textContent = JSON.stringify(payload || {}, null, 2);
-      details.hidden = false;
-    } catch (error) {
-      console.error('Failed loading extra data', error);
-    }
+        details.hidden = false;
+        details.open = true;
+        target.textContent = 'Cargando información...';
+
+        try {
+          const params = new URLSearchParams({ source: sourceName, model: modelId });
+          const response = await fetch(`${modelDetailsEndpoint}?${params.toString()}`, {
+            headers: { Accept: 'application/json' },
+          });
+          if (!response.ok) {
+            target.textContent = `No se pudo cargar la información (${response.status}).`;
+            return;
+          }
+
+          const payload = await response.json();
+          target.textContent = JSON.stringify(payload || {}, null, 2);
+        } catch (error) {
+          console.error('Failed loading model details', error);
+          target.textContent = 'No se pudo cargar la información extendida.';
+        }
+      });
+    });
   }
 
   document.querySelectorAll('.refresh-form').forEach((form) => {
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       await refreshSource(form);
-    });
-  });
-
-  document.querySelectorAll('.extra-button').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const sourceName = button.dataset.sourceName;
-      const container = button.closest('.source-block').querySelector('.models-area');
-      await loadExtraData(sourceName, container);
     });
   });
 

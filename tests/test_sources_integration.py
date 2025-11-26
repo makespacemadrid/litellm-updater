@@ -5,7 +5,11 @@ import httpx
 import pytest
 
 from litellm_updater.models import SourceEndpoint, SourceType
-from litellm_updater.sources import fetch_litellm_models, fetch_ollama_models
+from litellm_updater.sources import (
+    fetch_litellm_models,
+    fetch_ollama_model_details,
+    fetch_ollama_models,
+)
 
 REQUIRED_ENV_KEYS = (
     "TEST_OLLAMA_URL",
@@ -80,7 +84,7 @@ async def test_fetch_litellm_models_includes_metadata(test_env: dict[str, str]):
 
 
 @pytest.mark.asyncio
-async def test_fetch_ollama_models_uses_show_endpoint(test_env: dict[str, str]):
+async def test_fetch_ollama_models_uses_tags_endpoint(test_env: dict[str, str]):
     base_url = test_env.get("TEST_OLLAMA_URL")
     if not base_url:
         pytest.skip("TEST_OLLAMA_URL is not configured in tests/.env or environment variables")
@@ -99,6 +103,31 @@ async def test_fetch_ollama_models_uses_show_endpoint(test_env: dict[str, str]):
     metadata = models[0]
 
     assert metadata.id, "Model id should be populated"
-    assert metadata.capabilities, "Capabilities should be pulled from the /api/show response"
-    assert metadata.model_type, "Model type should be inferred from capabilities or upstream metadata"
-    assert metadata.context_window is not None, "Context size should be parsed from the Ollama model_info"
+    assert metadata.raw, "Tag metadata should be stored in the raw payload"
+    assert metadata.raw.get("name") == metadata.id, "Tag response should include the model name"
+    assert any(key in metadata.raw for key in ("digest", "size", "details")), "Expected digest, size or details from /api/tags"
+
+
+@pytest.mark.asyncio
+async def test_fetch_ollama_model_details_reads_show(test_env: dict[str, str]):
+    base_url = test_env.get("TEST_OLLAMA_URL")
+    if not base_url:
+        pytest.skip("TEST_OLLAMA_URL is not configured in tests/.env or environment variables")
+
+    source = SourceEndpoint(
+        name="Test Ollama",
+        base_url=base_url,
+        type=SourceType.OLLAMA,
+        api_key=test_env.get("TEST_OLLAMA_KEY") or None,
+    )
+
+    async with httpx.AsyncClient() as client:
+        models = await fetch_ollama_models(client, source)
+
+    assert models, "Expected at least one model from the Ollama server"
+    model_id = models[0].id
+
+    details = await fetch_ollama_model_details(source, model_id)
+
+    assert isinstance(details, dict) and details, "Show endpoint should return detailed metadata"
+    assert "modelfile" not in details, "Large fields should be cleaned from the response"

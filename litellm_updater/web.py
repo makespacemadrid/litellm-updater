@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Dict
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -22,7 +22,11 @@ from .config import (
     update_litellm_target,
 )
 from .models import AppConfig, LitellmTarget, SourceEndpoint, SourceModels, SourceType
-from .sources import fetch_litellm_target_models, fetch_source_models
+from .sources import (
+    fetch_litellm_target_models,
+    fetch_ollama_model_details,
+    fetch_source_models,
+)
 from .sync import start_scheduler, sync_once
 
 logger = logging.getLogger(__name__)
@@ -115,6 +119,26 @@ def create_app() -> FastAPI:
             return sync_state.models.get(source) or {}
 
         return sync_state.models
+
+    @app.get("/models/show")
+    async def model_details(source: str, model: str):
+        """Fetch extended Ollama model details on demand.
+
+        Only Ollama sources support the `/api/show` endpoint. The handler returns a
+        404 when the requested source is missing or not an Ollama provider.
+        """
+
+        config = load_config()
+        source_endpoint = next((item for item in config.sources if item.name == source), None)
+        if not source_endpoint or source_endpoint.type is not SourceType.OLLAMA:
+            raise HTTPException(status_code=404, detail="Source not found or unsupported")
+
+        try:
+            return await fetch_ollama_model_details(source_endpoint, model)
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
 
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_page(request: Request):
