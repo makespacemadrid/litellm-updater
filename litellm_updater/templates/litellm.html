@@ -10,7 +10,20 @@
   <ul class="model-cards">
     {% for model in litellm_models %}
     <li class="model-card">
-      <div class="model-card__header">{{ model.id }}</div>
+      <div class="model-card__header">
+        <div>{{ model.id }}</div>
+        <div class="model-card__meta">
+          {% if model.context_window %}
+          <span class="badge">Ctx: {{ "{:,}".format(model.context_window) }} tokens</span>
+          {% endif %}
+          {% if model.max_output_tokens %}
+          <span class="badge">Max output: {{ "{:,}".format(model.max_output_tokens) }} tokens</span>
+          {% endif %}
+          {% if model.capabilities %}
+          <span class="badge">Capabilities: {{ model.capabilities | join(", ") }}</span>
+          {% endif %}
+        </div>
+      </div>
       <pre class="model-card__body">{{ model.raw | tojson(indent=2) }}</pre>
     </li>
     {% endfor %}
