@@ -56,12 +56,89 @@ class LitellmTarget(BaseModel):
         return str(self.base_url).rstrip("/")
 
 
+def _extract_numeric(raw: Dict, *keys: str) -> int | None:
+    """Return the first numeric value found for the given keys in common sections."""
+
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, (int, float)):
+            return int(value)
+
+    metadata = raw.get("metadata")
+    if isinstance(metadata, dict):
+        for key in keys:
+            value = metadata.get(key)
+            if isinstance(value, (int, float)):
+                return int(value)
+
+    details = raw.get("details")
+    if isinstance(details, dict):
+        for key in keys:
+            value = details.get(key)
+            if isinstance(value, (int, float)):
+                return int(value)
+
+    return None
+
+
+def _extract_capabilities(raw: Dict) -> List[str]:
+    """Normalize capability-like fields into a readable list."""
+
+    capabilities: List[str] = []
+
+    raw_capabilities = raw.get("capabilities")
+    if isinstance(raw_capabilities, dict):
+        for name, enabled in raw_capabilities.items():
+            if enabled:
+                capabilities.append(str(name).replace("_", " "))
+    elif isinstance(raw_capabilities, list):
+        capabilities.extend(str(value) for value in raw_capabilities if value)
+
+    for field in ("modalities", "tools"):
+        values = raw.get(field)
+        if isinstance(values, list):
+            capabilities.extend(str(value) for value in values if value)
+
+    seen = set()
+    deduped: List[str] = []
+    for capability in capabilities:
+        if capability not in seen:
+            deduped.append(capability)
+            seen.add(capability)
+    return deduped
+
+
 class ModelMetadata(BaseModel):
     """Normalized model description."""
 
     id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    context_window: int | None = Field(
+        None, description="Maximum input context window (tokens) when provided by the source"
+    )
+    max_output_tokens: int | None = Field(
+        None, description="Maximum output tokens supported when provided by the source"
+    )
+    capabilities: List[str] = Field(
+        default_factory=list, description="Normalized list of model capabilities or modalities"
+    )
     raw: Dict = Field(default_factory=dict, description="Raw metadata returned from the source")
+
+    @classmethod
+    def from_raw(cls, model_id: str, raw: Dict) -> "ModelMetadata":
+        """Construct a metadata object with normalized context and capability details."""
+
+        context_window = _extract_numeric(raw, "context_length", "context_window", "max_context")
+        max_output_tokens = _extract_numeric(raw, "max_output_tokens", "max_output_length")
+        capabilities = _extract_capabilities(raw)
+
+        return cls(
+            id=model_id,
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
+            capabilities=capabilities,
+            raw=raw,
+        )
 
 
 class SourceModels(BaseModel):

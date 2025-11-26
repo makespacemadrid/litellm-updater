@@ -18,7 +18,7 @@ async def fetch_ollama_models(client: httpx.AsyncClient, source: SourceEndpoint)
     response.raise_for_status()
     payload = response.json()
     models = payload.get("models", [])
-    return [ModelMetadata(id=model.get("name", "unknown"), raw=model) for model in models]
+    return [ModelMetadata.from_raw(model.get("name", "unknown"), model) for model in models]
 
 
 async def fetch_litellm_models(client: httpx.AsyncClient, source: SourceEndpoint) -> List[ModelMetadata]:
@@ -30,7 +30,7 @@ async def fetch_litellm_models(client: httpx.AsyncClient, source: SourceEndpoint
     response.raise_for_status()
     payload = response.json()
     models = payload.get("data", [])
-    return [ModelMetadata(id=model.get("id", "unknown"), raw=model) for model in models]
+    return [ModelMetadata.from_raw(model.get("id", "unknown"), model) for model in models]
 
 
 async def fetch_litellm_target_models(target: LitellmTarget) -> List[ModelMetadata]:
