@@ -7,30 +7,44 @@ import pytest
 from litellm_updater.models import SourceEndpoint, SourceType
 from litellm_updater.sources import fetch_litellm_models, fetch_ollama_models
 
-ENV_KEYS = (
+REQUIRED_ENV_KEYS = (
     "TEST_OLLAMA_URL",
-    "TEST_OLLAMA_KEY",
     "TEST_OPENAI_URL",
     "TEST_OPENAI_KEY",
 )
+
+OPTIONAL_ENV_KEYS = ("TEST_OLLAMA_KEY",)
 
 
 def _load_env() -> dict[str, str]:
     env: dict[str, str] = {}
     env_path = Path(__file__).with_name(".env")
+    file_vars: dict[str, str] = {}
 
-    if env_path.exists():
+    # Prioritize values already exported in the environment
+    for key in (*REQUIRED_ENV_KEYS, *OPTIONAL_ENV_KEYS):
+        value = os.environ.get(key)
+        if value is not None:
+            env[key] = value
+
+    # Only read from tests/.env when a required value is missing
+    missing_required = [key for key in REQUIRED_ENV_KEYS if key not in env]
+    missing_optional = [key for key in OPTIONAL_ENV_KEYS if key not in env]
+    if (missing_required or missing_optional) and env_path.exists():
         for line in env_path.read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            env[key.strip()] = value.strip()
+            file_vars[key.strip()] = value.strip()
 
-    for key in ENV_KEYS:
-        value = os.getenv(key)
-        if value:
-            env[key] = value
+    for key in missing_required:
+        if key in file_vars:
+            env[key] = file_vars[key]
+
+    for key in missing_optional:
+        if key in file_vars:
+            env[key] = file_vars[key]
 
     return env
 

@@ -1,6 +1,7 @@
 """Pydantic models and enums used across the LiteLLM updater service."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional
@@ -74,12 +75,30 @@ def _extract_numeric(raw: Dict, *keys: str) -> int | None:
 
         return None
 
-    for section in (raw, raw.get("metadata"), raw.get("details"), raw.get("model_info")):
+    for section in (
+        raw,
+        raw.get("metadata"),
+        raw.get("details"),
+        raw.get("model_info"),
+        raw.get("summary"),
+    ):
         found = _search(section)
         if found is not None:
             return found
 
     return None
+
+
+def _dedupe(values: List[str]) -> List[str]:
+    """Preserve order while removing duplicates."""
+
+    seen = set()
+    deduped: List[str] = []
+    for value in values:
+        if value not in seen:
+            deduped.append(value)
+            seen.add(value)
+    return deduped
 
 
 def _extract_capabilities(raw: Dict) -> List[str]:
@@ -100,13 +119,7 @@ def _extract_capabilities(raw: Dict) -> List[str]:
         if isinstance(values, list):
             capabilities.extend(str(value) for value in values if value)
 
-    seen = set()
-    deduped: List[str] = []
-    for capability in capabilities:
-        if capability not in seen:
-            deduped.append(capability)
-            seen.add(capability)
-    return deduped
+    return _dedupe(capabilities)
 
 
 def _extract_model_type(model_id: str, raw: Dict, capabilities: List[str]) -> str | None:
@@ -127,8 +140,53 @@ def _extract_model_type(model_id: str, raw: Dict, capabilities: List[str]) -> st
     if capabilities:
         return capabilities[0]
 
-    if "embed" in model_id.lower():
+    normalized_id = model_id.lower()
+    if "embed" in normalized_id:
         return "embedding"
+    if any(token in normalized_id for token in ("gpt", "llama", "mixtral", "turbo", "chat")):
+        return "completion"
+    return None
+
+
+def _ensure_capabilities(model_id: str, capabilities: List[str], model_type: str | None) -> List[str]:
+    """Backfill capabilities using heuristics when upstream data is sparse."""
+
+    normalized = list(capabilities)
+    lowered_id = model_id.lower()
+
+    if not normalized:
+        if "vision" in lowered_id:
+            normalized.append("vision")
+        if "embed" in lowered_id:
+            normalized.append("embedding")
+        if not normalized:
+            normalized.append("completion")
+
+    if model_type and model_type not in normalized:
+        normalized.append(model_type)
+
+    return _dedupe(normalized)
+
+
+def _fallback_context_window(model_id: str, context_window: int | None) -> int | None:
+    """Infer a reasonable context window when upstream metadata omits it."""
+
+    if context_window is not None:
+        return context_window
+
+    lowered_id = model_id.lower()
+    match = re.search(r"(\d+)(?:k)", lowered_id)
+    if match:
+        try:
+            return int(match.group(1)) * 1000
+        except ValueError:
+            pass
+
+    if "gpt-3.5" in lowered_id:
+        return 16385
+    if "gpt-4" in lowered_id or "gpt4" in lowered_id:
+        return 128000
+
     return None
 
 
@@ -157,6 +215,8 @@ class ModelMetadata(BaseModel):
         max_output_tokens = _extract_numeric(raw, "max_output_tokens", "max_output_length")
         capabilities = _extract_capabilities(raw)
         model_type = _extract_model_type(model_id, raw, capabilities)
+        capabilities = _ensure_capabilities(model_id, capabilities, model_type)
+        context_window = _fallback_context_window(model_id, context_window)
 
         return cls(
             id=model_id,

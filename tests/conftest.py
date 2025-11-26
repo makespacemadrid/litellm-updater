@@ -15,7 +15,19 @@ if str(REPO_ROOT) not in sys.path:
 
 
 def _load_test_env() -> None:
-    """Load tests/.env into the process env for live integration runs."""
+    """Load missing TEST_* vars from tests/.env without overriding runtime env."""
+
+    required_keys = {
+        "TEST_OLLAMA_URL",
+        "TEST_OPENAI_URL",
+        "TEST_OPENAI_KEY",
+    }
+    optional_keys = {"TEST_OLLAMA_KEY"}
+
+    missing = {key for key in required_keys if key not in os.environ}
+    missing_optional = {key for key in optional_keys if key not in os.environ}
+    if not missing and not missing_optional:
+        return
 
     env_path = Path(__file__).with_name(".env")
     if not env_path.exists():
@@ -26,7 +38,8 @@ def _load_test_env() -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
+        if key in missing or key in missing_optional:
+            os.environ.setdefault(key.strip(), value.strip())
 
 
 _load_test_env()
