@@ -61,8 +61,10 @@
               {% if model.capabilities|length > 3 %}
               <span class="badge">+{{ model.capabilities|length - 3 }} más</span>
               {% endif %}
+              {% elif model.model_type %}
+              <span class="badge">{{ model.model_type }}</span>
               {% else %}
-              <span class="badge muted">No capabilities specified</span>
+              <span class="badge muted">Chat model</span>
               {% endif %}
             </div>
 
@@ -373,8 +375,10 @@
           if (model.capabilities.length > 3) {
             capabilitiesBadges.push(`<span class="badge">+${model.capabilities.length - 3} más</span>`);
           }
+        } else if (model.model_type) {
+          capabilitiesBadges.push(`<span class="badge">${model.model_type}</span>`);
         } else {
-          capabilitiesBadges.push(`<span class="badge muted">No capabilities specified</span>`);
+          capabilitiesBadges.push(`<span class="badge muted">Chat model</span>`);
         }
 
         return `
@@ -528,9 +532,32 @@
           return;
         }
 
-        // TODO: Implement actual add endpoint
-        console.log('Add model to LiteLLM:', sourceName, modelId);
-        alert(`Añadir ${modelId} a LiteLLM - Pendiente de implementación en el backend`);
+        try {
+          button.disabled = true;
+          button.textContent = 'Añadiendo...';
+
+          const formData = new FormData();
+          formData.append('source', sourceName);
+          formData.append('model', modelId);
+
+          const response = await fetch('/models/add', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (response.ok) {
+            alert(`Modelo ${modelId} añadido exitosamente a LiteLLM`);
+          } else {
+            const error = await response.json();
+            alert(`Error al añadir modelo: ${error.detail || response.statusText}`);
+          }
+        } catch (error) {
+          console.error('Failed to add model:', error);
+          alert(`Error de red al añadir modelo: ${error.message}`);
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Add';
+        }
       });
     });
   }
@@ -542,7 +569,21 @@
     });
   });
 
-  document.addEventListener('DOMContentLoaded', loadModels);
+  // Bind event listeners to initially server-rendered model cards
+  function bindInitialModelActions() {
+    document.querySelectorAll('.models-area').forEach((container) => {
+      bindModelActions(container);
+    });
+  }
+
+  // Initialize on page load
+  document.addEventListener('DOMContentLoaded', () => {
+    bindInitialModelActions();
+    loadModels();
+  });
+
+  // Also bind immediately in case DOMContentLoaded already fired
+  bindInitialModelActions();
   loadModels();
 </script>
 {% endblock %}

@@ -6,8 +6,9 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 
-from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Form, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -130,10 +131,58 @@ async def lifespan(app: FastAPI):
             logger.exception("Unexpected error during scheduler shutdown")
 
 
+async def _delete_model_from_litellm(
+    client: httpx.AsyncClient, litellm_base_url: str, api_key: str | None, model_id: str
+) -> None:
+    """Delete a model from LiteLLM."""
+    url = f"{litellm_base_url}/router/model/delete"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload = {"id": model_id}
+    response = await client.post(url, json=payload, headers=headers, timeout=30.0)
+    response.raise_for_status()
+
+
+async def _add_model_to_litellm(
+    litellm_base_url: str, api_key: str | None, model_name: str, model_params: dict | None = None
+) -> dict:
+    """Add a single model to LiteLLM."""
+    url = f"{litellm_base_url}/router/model/add"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload = {"model_name": model_name}
+    if model_params:
+        payload.update(model_params)
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers, timeout=30.0)
+        response.raise_for_status()
+        return response.json()
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="LiteLLM Updater", description="Sync models into LiteLLM", lifespan=lifespan)
     templates = Jinja2Templates(directory="litellm_updater/templates")
     app.mount("/static", StaticFiles(directory="litellm_updater/static"), name="static")
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        """Handle validation errors with user-friendly messages."""
+        errors = exc.errors()
+        error_messages = []
+        for error in errors:
+            field = " -> ".join(str(loc) for loc in error["loc"])
+            message = error["msg"]
+            error_messages.append(f"{field}: {message}")
+
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": error_messages}
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -267,27 +316,104 @@ def create_app() -> FastAPI:
         source_type: SourceType = Form(...),
         api_key: str | None = Form(None),
     ):
-        endpoint = SourceEndpoint(name=name, base_url=base_url, type=source_type, api_key=api_key or None)
-        save_source(endpoint)
+        # Validate name is not empty
+        if not name or not name.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source name cannot be empty"
+            )
+
+        # Check for duplicate source names
+        config = load_config()
+        if any(s.name == name for s in config.sources):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Source with name '{name}' already exists"
+            )
+
+        try:
+            endpoint = SourceEndpoint(name=name, base_url=base_url, type=source_type, api_key=api_key or None)
+            save_source(endpoint)
+            logger.info("Added source: %s (%s) at %s", name, source_type, base_url)
+        except ValueError as exc:
+            logger.error("Invalid source configuration: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid source configuration: {str(exc)}"
+            )
+        except (OSError, RuntimeError) as exc:
+            logger.error("Failed to save source: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save source: {str(exc)}"
+            )
+
         return RedirectResponse(url="/admin", status_code=303)
 
     @app.post("/admin/sources/delete")
     async def delete_source(name: str = Form(...)):
-        delete_source_from_config(name)
+        # Verify source exists
+        config = load_config()
+        if not any(s.name == name for s in config.sources):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source '{name}' not found"
+            )
+
+        try:
+            delete_source_from_config(name)
+            logger.info("Deleted source: %s", name)
+        except (OSError, RuntimeError) as exc:
+            logger.error("Failed to delete source: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to delete source: {str(exc)}"
+            )
+
         return RedirectResponse(url="/admin", status_code=303)
 
     @app.post("/admin/litellm")
     async def update_litellm(base_url: str = Form(""), api_key: str | None = Form(None)):
-        target = LitellmDestination(
-            base_url=base_url or None,
-            api_key=api_key or None,
-        )
-        update_litellm_target(target)
+        try:
+            target = LitellmDestination(
+                base_url=base_url or None,
+                api_key=api_key or None,
+            )
+            update_litellm_target(target)
+            logger.info("Updated LiteLLM target: %s", base_url or "disabled")
+        except ValueError as exc:
+            logger.error("Invalid LiteLLM configuration: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid LiteLLM configuration: {str(exc)}"
+            )
+        except (OSError, RuntimeError) as exc:
+            logger.error("Failed to update LiteLLM target: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update LiteLLM target: {str(exc)}"
+            )
+
         return RedirectResponse(url="/admin", status_code=303)
 
     @app.post("/admin/interval")
     async def update_interval(sync_interval_seconds: int = Form(...)):
-        set_sync_interval(sync_interval_seconds)
+        try:
+            set_sync_interval(sync_interval_seconds)
+            logger.info("Updated sync interval: %d seconds", sync_interval_seconds)
+        except ValueError as exc:
+            logger.error("Invalid sync interval: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid sync interval: {str(exc)}"
+            )
+        except (OSError, RuntimeError) as exc:
+            logger.error("Failed to update sync interval: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update sync interval: {str(exc)}"
+            )
+
         return RedirectResponse(url="/admin", status_code=303)
 
     @app.post("/sync")
@@ -324,13 +450,320 @@ def create_app() -> FastAPI:
 
         return RedirectResponse(url="/sources", status_code=303)
 
+    @app.post("/models/add")
+    async def add_model_to_litellm(
+        source: str = Form(...),
+        model: str = Form(...),
+    ):
+        """Add a single model from a source to LiteLLM."""
+        config = load_config()
+
+        if not config.litellm.configured:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LiteLLM target is not configured"
+            )
+
+        # Find the source
+        source_endpoint = next((s for s in config.sources if s.name == source), None)
+        if not source_endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source '{source}' not found"
+            )
+
+        # Get model metadata from sync state
+        models_dict = await sync_state.get_models()
+        source_models = models_dict.get(source)
+        if not source_models:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No models found for source '{source}'. Try refreshing first."
+            )
+
+        # Find the specific model
+        model_metadata = next((m for m in source_models.models if m.id == model), None)
+        if not model_metadata:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model '{model}' not found in source '{source}'"
+            )
+
+        try:
+            # Add model to LiteLLM
+            await _add_model_to_litellm(
+                config.litellm.normalized_base_url,
+                config.litellm.api_key,
+                model_metadata.id,
+                model_metadata.litellm_fields
+            )
+            logger.info("Successfully added model %s from %s to LiteLLM", model, source)
+        except httpx.HTTPStatusError as exc:
+            logger.error("LiteLLM rejected model %s: %s", model, exc.response.text)
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=f"LiteLLM rejected the model: {exc.response.text}"
+            )
+        except httpx.RequestError as exc:
+            logger.error("Failed to reach LiteLLM: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to reach LiteLLM: {str(exc)}"
+            )
+
+        return RedirectResponse(url="/sources", status_code=303)
+
+    @app.post("/litellm/models/delete")
+    async def delete_model_from_litellm(model_id: str = Form(...)):
+        """Delete a single model from LiteLLM."""
+        config = load_config()
+
+        if not config.litellm.configured:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LiteLLM target is not configured"
+            )
+
+        try:
+            async with httpx.AsyncClient() as client:
+                await _delete_model_from_litellm(
+                    client,
+                    config.litellm.normalized_base_url,
+                    config.litellm.api_key,
+                    model_id
+                )
+            logger.info("Successfully deleted model %s from LiteLLM", model_id)
+        except httpx.HTTPStatusError as exc:
+            logger.error("LiteLLM rejected delete for %s: %s", model_id, exc.response.text)
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=f"LiteLLM rejected the delete request: {exc.response.text}"
+            )
+        except httpx.RequestError as exc:
+            logger.error("Failed to reach LiteLLM: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to reach LiteLLM: {str(exc)}"
+            )
+
+        return RedirectResponse(url="/litellm", status_code=303)
+
+    @app.post("/litellm/models/delete/bulk")
+    async def delete_models_bulk(request: Request):
+        """Delete multiple models from LiteLLM."""
+        config = load_config()
+
+        if not config.litellm.configured:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LiteLLM target is not configured"
+            )
+
+        form_data = await request.form()
+        model_ids = form_data.getlist("model_ids")
+
+        if not model_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No model IDs provided"
+            )
+
+        deleted = []
+        failed = []
+
+        async with httpx.AsyncClient() as client:
+            for model_id in model_ids:
+                try:
+                    await _delete_model_from_litellm(
+                        client,
+                        config.litellm.normalized_base_url,
+                        config.litellm.api_key,
+                        model_id
+                    )
+                    deleted.append(model_id)
+                    logger.info("Successfully deleted model %s from LiteLLM", model_id)
+                except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                    failed.append({"model_id": model_id, "error": str(exc)})
+                    logger.error("Failed to delete model %s: %s", model_id, exc)
+
+        if failed:
+            logger.warning("Bulk delete completed with errors. Deleted: %d, Failed: %d",
+                         len(deleted), len(failed))
+
+        return RedirectResponse(url="/litellm", status_code=303)
+
     @app.get("/api/sources")
     async def api_sources() -> AppConfig:
         return load_config()
 
+    @app.post("/api/sources")
+    async def api_add_source(endpoint: SourceEndpoint):
+        """Add a new source via API."""
+        # Check for duplicate source names
+        config = load_config()
+        if any(s.name == endpoint.name for s in config.sources):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Source with name '{endpoint.name}' already exists"
+            )
+
+        try:
+            save_source(endpoint)
+            logger.info("Added source via API: %s (%s) at %s", endpoint.name, endpoint.type, endpoint.base_url)
+            return {"status": "success", "message": f"Source '{endpoint.name}' added successfully"}
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid source configuration: {str(exc)}"
+            )
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save source: {str(exc)}"
+            )
+
+    @app.delete("/api/sources/{name}")
+    async def api_delete_source(name: str):
+        """Delete a source via API."""
+        config = load_config()
+        if not any(s.name == name for s in config.sources):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source '{name}' not found"
+            )
+
+        try:
+            delete_source_from_config(name)
+            logger.info("Deleted source via API: %s", name)
+            return {"status": "success", "message": f"Source '{name}' deleted successfully"}
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to delete source: {str(exc)}"
+            )
+
     @app.get("/api/models")
     async def api_models() -> dict[str, SourceModels]:
         return await sync_state.get_models()
+
+    @app.post("/api/models")
+    async def api_add_model(source: str, model: str):
+        """Add a model to LiteLLM via API."""
+        config = load_config()
+
+        if not config.litellm.configured:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LiteLLM target is not configured"
+            )
+
+        # Find the source
+        source_endpoint = next((s for s in config.sources if s.name == source), None)
+        if not source_endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source '{source}' not found"
+            )
+
+        # Get model metadata from sync state
+        models_dict = await sync_state.get_models()
+        source_models = models_dict.get(source)
+        if not source_models:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No models found for source '{source}'. Try syncing first."
+            )
+
+        # Find the specific model
+        model_metadata = next((m for m in source_models.models if m.id == model), None)
+        if not model_metadata:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model '{model}' not found in source '{source}'"
+            )
+
+        try:
+            result = await _add_model_to_litellm(
+                config.litellm.normalized_base_url,
+                config.litellm.api_key,
+                model_metadata.id,
+                model_metadata.litellm_fields
+            )
+            logger.info("Successfully added model %s from %s to LiteLLM via API", model, source)
+            return {"status": "success", "message": f"Model '{model}' added to LiteLLM", "result": result}
+        except httpx.HTTPStatusError as exc:
+            logger.error("LiteLLM rejected model %s: %s", model, exc.response.text)
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=f"LiteLLM rejected the model: {exc.response.text}"
+            )
+        except httpx.RequestError as exc:
+            logger.error("Failed to reach LiteLLM: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to reach LiteLLM: {str(exc)}"
+            )
+
+    @app.delete("/api/models/{model_id}")
+    async def api_delete_model(model_id: str):
+        """Delete a model from LiteLLM via API."""
+        config = load_config()
+
+        if not config.litellm.configured:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LiteLLM target is not configured"
+            )
+
+        try:
+            async with httpx.AsyncClient() as client:
+                await _delete_model_from_litellm(
+                    client,
+                    config.litellm.normalized_base_url,
+                    config.litellm.api_key,
+                    model_id
+                )
+            logger.info("Successfully deleted model %s from LiteLLM via API", model_id)
+            return {"status": "success", "message": f"Model '{model_id}' deleted from LiteLLM"}
+        except httpx.HTTPStatusError as exc:
+            logger.error("LiteLLM rejected delete for %s: %s", model_id, exc.response.text)
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=f"LiteLLM rejected the delete request: {exc.response.text}"
+            )
+        except httpx.RequestError as exc:
+            logger.error("Failed to reach LiteLLM: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to reach LiteLLM: {str(exc)}"
+            )
+
+    @app.post("/api/sync")
+    async def api_sync():
+        """Trigger a manual sync via API."""
+        config = load_config()
+        try:
+            results = await sync_once(config)
+            await sync_state.update(results)
+            model_count = sum(len(source_models.models) for source_models in results.values())
+            return {
+                "status": "success",
+                "message": "Sync completed successfully",
+                "sources_synced": len(results),
+                "total_models": model_count
+            }
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("API sync failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Sync failed: {str(exc)}"
+            )
+        except Exception as exc:
+            logger.exception("Unexpected error during API sync")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unexpected error during sync: {str(exc)}"
+            )
 
     return app
 

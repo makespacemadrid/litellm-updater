@@ -144,6 +144,26 @@ def _extract_capabilities(raw: dict) -> list[str]:
         if isinstance(values, list):
             capabilities.extend(str(value) for value in values if value)
 
+    # Infer capabilities from Ollama model details and families
+    details = raw.get("details")
+    if isinstance(details, dict):
+        families = details.get("families", [])
+        if isinstance(families, list):
+            # Vision support - models with clip, llava, or vision in families
+            if any(fam.lower() in ["clip", "llava", "vision", "bakllava", "moondream"] for fam in families):
+                capabilities.append("vision")
+
+            # Audio support - whisper models
+            if any(fam.lower() in ["whisper"] for fam in families):
+                capabilities.append("audio")
+
+            # Check main family too
+            family = details.get("family", "").lower()
+            if family in ["clip", "llava", "bakllava", "moondream"]:
+                capabilities.append("vision")
+            if family == "whisper":
+                capabilities.append("audio")
+
     return _dedupe(capabilities)
 
 
@@ -211,11 +231,27 @@ def _ensure_capabilities(model_id: str, capabilities: list[str], model_type: str
     normalized = list(capabilities)
     lowered_id = model_id.lower()
 
-    # Only add vision if it's explicitly in the model ID
-    if not normalized and "vision" in lowered_id:
-        normalized.append("vision")
-    # Don't auto-add "completion" or model_type to capabilities
-    # Let them be empty if not provided
+    # Infer vision capability from model name
+    vision_keywords = ["vision", "llava", "bakllava", "moondream", "minicpm-v", "cogvlm", "qwen-vl", "qwen2-vl", "qwen3-vl"]
+    if any(keyword in lowered_id for keyword in vision_keywords):
+        if "vision" not in [c.lower() for c in normalized]:
+            normalized.append("vision")
+
+    # Infer function calling / tool use from model name
+    tool_keywords = ["tool", "function", "groq-tool"]
+    if any(keyword in lowered_id for keyword in tool_keywords):
+        if "function calling" not in [c.lower() for c in normalized]:
+            normalized.append("function calling")
+
+    # Infer audio capability from model name
+    audio_keywords = ["whisper", "audio"]
+    if any(keyword in lowered_id for keyword in audio_keywords):
+        if "audio" not in [c.lower() for c in normalized]:
+            normalized.append("audio")
+
+    # If still no capabilities and it's a chat/completion model, add that
+    if not normalized and model_type and model_type.lower() == "completion":
+        normalized.append("completion")
 
     return _dedupe(normalized)
 
@@ -227,17 +263,56 @@ def _fallback_context_window(model_id: str, context_window: int | None) -> int |
         return context_window
 
     lowered_id = model_id.lower()
-    match = re.search(r"(\d+)(?:k)", lowered_id)
+
+    # Try to extract from model name (e.g., "128k", "32k")
+    match = re.search(r"(\d+)k", lowered_id)
     if match:
         try:
             return int(match.group(1)) * 1000
         except ValueError:
             pass
 
+    # Common model families with known context windows
     if "gpt-3.5" in lowered_id:
         return 16385
     if "gpt-4" in lowered_id or "gpt4" in lowered_id:
         return 128000
+
+    # Llama models
+    if "llama3.1" in lowered_id or "llama-3.1" in lowered_id:
+        return 128000
+    if "llama3.2" in lowered_id or "llama-3.2" in lowered_id:
+        return 128000
+    if "llama3" in lowered_id or "llama-3" in lowered_id:
+        return 8192
+    if "llama2" in lowered_id or "llama-2" in lowered_id:
+        return 4096
+
+    # Qwen models
+    if "qwen2.5" in lowered_id or "qwen-2.5" in lowered_id:
+        return 32768
+    if "qwen2" in lowered_id or "qwen-2" in lowered_id:
+        return 32768
+    if "qwen3" in lowered_id or "qwen-3" in lowered_id:
+        return 32768
+
+    # Mistral models
+    if "mistral" in lowered_id or "mixtral" in lowered_id:
+        if "large" in lowered_id:
+            return 128000
+        return 32000
+
+    # Gemma models
+    if "gemma2" in lowered_id or "gemma-2" in lowered_id:
+        return 8192
+    if "gemma" in lowered_id:
+        return 8192
+
+    # Claude models
+    if "claude-3" in lowered_id:
+        return 200000
+    if "claude-2" in lowered_id:
+        return 100000
 
     return None
 

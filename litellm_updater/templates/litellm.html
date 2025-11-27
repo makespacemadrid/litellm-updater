@@ -183,13 +183,35 @@
       const checked = document.querySelectorAll('.model-checkbox:checked');
       const modelIds = Array.from(checked).map(cb => cb.value);
 
+      if (modelIds.length === 0) {
+        alert('No hay modelos seleccionados');
+        return;
+      }
+
       if (!confirm(`¿Estás seguro de que quieres eliminar ${modelIds.length} modelos?`)) {
         return;
       }
 
-      // TODO: Implement actual delete endpoint
-      console.log('Deleting models:', modelIds);
-      alert('Funcionalidad de eliminación por lotes - pendiente de implementación en el backend');
+      try {
+        const formData = new FormData();
+        modelIds.forEach(id => formData.append('model_ids', id));
+
+        const response = await fetch('/litellm/models/delete/bulk', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (response.ok) {
+          alert(`${modelIds.length} modelos eliminados exitosamente`);
+          location.reload();
+        } else {
+          const error = await response.json();
+          alert(`Error al eliminar modelos: ${error.detail || response.statusText}`);
+        }
+      } catch (error) {
+        console.error('Failed to delete models:', error);
+        alert(`Error de red al eliminar modelos: ${error.message}`);
+      }
     });
 
     // Individual delete
@@ -201,9 +223,32 @@
           return;
         }
 
-        // TODO: Implement actual delete endpoint
-        console.log('Deleting model:', modelId);
-        alert('Funcionalidad de eliminación individual - pendiente de implementación en el backend');
+        try {
+          button.disabled = true;
+          button.textContent = 'Eliminando...';
+
+          const formData = new FormData();
+          formData.append('model_id', modelId);
+
+          const response = await fetch('/litellm/models/delete', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (response.ok) {
+            alert(`Modelo ${modelId} eliminado exitosamente`);
+            location.reload();
+          } else {
+            const error = await response.json();
+            alert(`Error al eliminar modelo: ${error.detail || response.statusText}`);
+          }
+        } catch (error) {
+          console.error('Failed to delete model:', error);
+          alert(`Error de red al eliminar modelo: ${error.message}`);
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Delete';
+        }
       });
     });
 
