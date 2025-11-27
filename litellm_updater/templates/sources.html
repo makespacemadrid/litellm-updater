@@ -26,10 +26,9 @@
           {% for model in source_models.models %}
           {% set litellm_fields = model.litellm_fields %}
           <li class="model-card">
+            <!-- Model Header -->
             <div class="model-card__header">
-              <div class="model-card__title">
-                {{ model.id }}
-              </div>
+              <div class="model-card__title">{{ model.id }}</div>
               {% if model.raw.get('details') %}
               {% set details = model.raw.details %}
               <div class="model-card__subtitle">
@@ -42,57 +41,43 @@
                 {% endif %}
               </div>
               {% endif %}
-              <div class="model-card__meta">
-                {% if model.litellm_mode %}
-                <span class="badge badge-mode">{{ model.litellm_mode }}</span>
-                {% endif %}
-                {% if model.model_type %}
-                <span class="badge badge-type">{{ model.model_type }}</span>
-                {% endif %}
-                {% if litellm_fields.get('litellm_provider') %}
-                <span class="badge badge-provider">{{ litellm_fields.litellm_provider }}</span>
-                {% endif %}
-              </div>
             </div>
 
-            <!-- Capabilities Section -->
-            {% if model.capabilities %}
-            <div class="metadata-section metadata-section--capabilities">
-              <div class="metadata-section__title">Capacidades</div>
-              <div class="capabilities-grid">
-                {% for capability in model.capabilities %}
-                <div class="capability-item">{{ capability }}</div>
-                {% endfor %}
-              </div>
-            </div>
-            {% endif %}
+            <!-- Model Info -->
+            <div class="model-card__info">
+              <!-- Context Window -->
+              {% if model.context_window or litellm_fields.get('max_input_tokens') %}
+              <span class="badge">
+                Context: {{ "{:,}".format(litellm_fields.get('max_input_tokens', model.context_window)) }}
+              </span>
+              {% endif %}
 
-            <!-- Token Limits Section -->
-            <div class="metadata-section metadata-section--tokens">
-              <div class="metadata-section__title">Límites de Tokens</div>
-              <div class="token-limits">
-                {% if model.context_window or litellm_fields.get('max_input_tokens') %}
-                <div class="token-limit-item">
-                  <span class="token-limit-item__label">Entrada (Context):</span>
-                  <span class="token-limit-item__value">{{ "{:,}".format(litellm_fields.get('max_input_tokens', model.context_window)) }}</span>
-                </div>
-                {% endif %}
-                {% if model.max_output_tokens or litellm_fields.get('max_output_tokens') %}
-                <div class="token-limit-item">
-                  <span class="token-limit-item__label">Salida:</span>
-                  <span class="token-limit-item__value">{{ "{:,}".format(model.max_output_tokens or litellm_fields.get('max_output_tokens')) }}</span>
-                </div>
-                {% endif %}
-              </div>
+              <!-- Capabilities -->
+              {% if model.capabilities %}
+              {% for capability in model.capabilities[:3] %}
+              <span class="badge badge-support">{{ capability }}</span>
+              {% endfor %}
+              {% if model.capabilities|length > 3 %}
+              <span class="badge">+{{ model.capabilities|length - 3 }} más</span>
+              {% endif %}
+              {% endif %}
             </div>
 
+            <!-- Actions -->
             <div class="model-card__actions">
-              <button type="button" class="model-more-info" data-source-name="{{ source.name }}" data-model-id="{{ model.id }}">
-                Ver más información
+              <button type="button" class="btn-info model-more-info" data-source-name="{{ source.name }}" data-model-id="{{ model.id }}">
+                Info
+              </button>
+              <button type="button" class="btn-edit model-edit" data-source-name="{{ source.name }}" data-model-id="{{ model.id }}">
+                Edit
+              </button>
+              <button type="button" class="btn-add model-add" data-source-name="{{ source.name }}" data-model-id="{{ model.id }}">
+                Add
               </button>
             </div>
 
-            <details class="model-card__details">
+            <!-- Details (hidden by default) -->
+            <details class="model-card__details" style="grid-column: 1 / -1; margin-top: 0.5rem;">
               <summary style="display: none;"></summary>
               <div class="model-card__details-content">
                 <div class="litellm-fields-preview">Cargando información completa...</div>
@@ -369,67 +354,46 @@
         if (details.quantization_level) subtitleParts.push(details.quantization_level);
         const subtitle = subtitleParts.length > 0 ? `<div class="model-card__subtitle">${subtitleParts.join(' • ')}</div>` : '';
 
-        // Quick info badges for header
-        const quickBadges = [];
-        if (model.litellm_mode) quickBadges.push(`<span class="badge badge-mode">${model.litellm_mode}</span>`);
-        if (model.model_type) quickBadges.push(`<span class="badge badge-type">${model.model_type}</span>`);
-        if (model.raw?.litellm_provider) {
-          quickBadges.push(`<span class="badge badge-provider">${model.raw.litellm_provider}</span>`);
-        }
-
-        // Build capabilities section
-        const capabilitiesHTML = Array.isArray(model.capabilities) && model.capabilities.length > 0
-          ? `<div class="metadata-section metadata-section--capabilities">
-               <div class="metadata-section__title">Capacidades</div>
-               <div class="capabilities-grid">
-                 ${model.capabilities.map(cap => `<div class="capability-item">${cap}</div>`).join('')}
-               </div>
-             </div>`
+        // Context window badge
+        const contextValue = model.max_input_tokens || model.context_window;
+        const contextBadge = contextValue
+          ? `<span class="badge">Context: ${contextValue.toLocaleString()}</span>`
           : '';
 
-        // Build token limits section
-        const tokenLimitsHTML = [];
-        if (model.max_input_tokens || model.context_window) {
-          tokenLimitsHTML.push(`
-            <div class="token-limit-item">
-              <span class="token-limit-item__label">Entrada (Context):</span>
-              <span class="token-limit-item__value">${(model.max_input_tokens || model.context_window).toLocaleString()}</span>
-            </div>
-          `);
+        // Capabilities badges (show first 3)
+        const capabilitiesBadges = [];
+        if (Array.isArray(model.capabilities) && model.capabilities.length > 0) {
+          const capsToShow = model.capabilities.slice(0, 3);
+          capsToShow.forEach(cap => {
+            capabilitiesBadges.push(`<span class="badge badge-support">${cap}</span>`);
+          });
+          if (model.capabilities.length > 3) {
+            capabilitiesBadges.push(`<span class="badge">+${model.capabilities.length - 3} más</span>`);
+          }
         }
-        if (model.max_output_tokens) {
-          tokenLimitsHTML.push(`
-            <div class="token-limit-item">
-              <span class="token-limit-item__label">Salida:</span>
-              <span class="token-limit-item__value">${model.max_output_tokens.toLocaleString()}</span>
-            </div>
-          `);
-        }
-
-        const tokenSection = tokenLimitsHTML.length > 0
-          ? `<div class="metadata-section metadata-section--tokens">
-               <div class="metadata-section__title">Límites de Tokens</div>
-               <div class="token-limits">
-                 ${tokenLimitsHTML.join('')}
-               </div>
-             </div>`
-          : '';
 
         return `
           <li class="model-card">
             <div class="model-card__header">
               <div class="model-card__title">${model.id}</div>
               ${subtitle}
-              <div class="model-card__meta">${quickBadges.join(' ')}</div>
             </div>
-            ${capabilitiesHTML}
-            ${tokenSection}
+            <div class="model-card__info">
+              ${contextBadge}
+              ${capabilitiesBadges.join('')}
+            </div>
             <div class="model-card__actions">
-              <button type="button" class="model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
-                Ver más información
+              <button type="button" class="btn-info model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
+                Info
+              </button>
+              <button type="button" class="btn-edit model-edit" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
+                Edit
+              </button>
+              <button type="button" class="btn-add model-add" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
+                Add
               </button>
             </div>
-            <details class="model-card__details">
+            <details class="model-card__details" style="grid-column: 1 / -1; margin-top: 0.5rem;">
               <summary style="display: none;"></summary>
               <div class="model-card__details-content">
                 <div class="litellm-fields-preview">Cargando información completa...</div>
@@ -449,7 +413,7 @@
       <ul class="model-cards">${items}</ul>
     `;
 
-    bindModelDetails(container);
+    bindModelActions(container);
   }
 
   async function loadModels() {
@@ -473,7 +437,8 @@
     await loadModels();
   }
 
-  function bindModelDetails(container) {
+  function bindModelActions(container) {
+    // Info button (existing functionality)
     container.querySelectorAll('.model-more-info').forEach((button) => {
       button.addEventListener('click', async () => {
         const sourceName = button.dataset.sourceName;
@@ -533,6 +498,34 @@
           console.error('Failed loading model details', error);
           fieldsPreview.innerHTML = '<p class="error">No se pudo cargar la información extendida.</p>';
         }
+      });
+    });
+
+    // Edit button
+    container.querySelectorAll('.model-edit').forEach((button) => {
+      button.addEventListener('click', () => {
+        const sourceName = button.dataset.sourceName;
+        const modelId = button.dataset.modelId;
+
+        // TODO: Implement edit modal/page
+        console.log('Edit model:', sourceName, modelId);
+        alert(`Editar modelo ${modelId} - Pendiente de implementación`);
+      });
+    });
+
+    // Add button
+    container.querySelectorAll('.model-add').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const sourceName = button.dataset.sourceName;
+        const modelId = button.dataset.modelId;
+
+        if (!confirm(`¿Añadir ${modelId} a LiteLLM?`)) {
+          return;
+        }
+
+        // TODO: Implement actual add endpoint
+        console.log('Add model to LiteLLM:', sourceName, modelId);
+        alert(`Añadir ${modelId} a LiteLLM - Pendiente de implementación en el backend`);
       });
     });
   }

@@ -92,31 +92,113 @@ select {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .model-card {
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
-  padding: 0.75rem;
+  padding: 0.75rem 1rem;
   box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  transition: background-color 0.15s ease;
+}
+
+.model-card:hover {
+  background: #f8fafc;
+}
+
+.model-card--selected {
+  background: #eff6ff;
+  border-color: #3b82f6;
+}
+
+.model-card__checkbox {
+  flex-shrink: 0;
+}
+
+.model-card__checkbox input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  cursor: pointer;
 }
 
 .model-card__header {
-  font-weight: 600;
-  margin-bottom: 0.35rem;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+.model-card__info {
+  flex: 2;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 .model-card__meta {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.model-card__actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.model-card__actions button {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.btn-info {
+  background: #0ea5e9;
+  color: white;
+}
+
+.btn-info:hover {
+  background: #0284c7;
+}
+
+.btn-edit {
+  background: #f59e0b;
+  color: white;
+}
+
+.btn-edit:hover {
+  background: #d97706;
+}
+
+.btn-add {
+  background: #10b981;
+  color: white;
+}
+
+.btn-add:hover {
+  background: #059669;
+}
+
+.btn-delete {
+  background: #ef4444;
+  color: white;
+}
+
+.btn-delete:hover {
+  background: #dc2626;
 }
 
 .badge {
@@ -141,10 +223,31 @@ select {
   border: 1px solid #e2e8f0;
 }
 
-.model-card__actions {
-  margin-top: 0.5rem;
+/* Bulk actions bar */
+.bulk-actions {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
   display: flex;
-  justify-content: flex-start;
+  align-items: center;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.bulk-actions__info {
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.bulk-actions__buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.bulk-actions--hidden {
+  display: none;
 }
 
 .model-card__details {

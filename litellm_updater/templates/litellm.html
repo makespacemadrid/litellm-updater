@@ -7,10 +7,30 @@
   {% else %}
   <p class="muted">Fetched at {{ fetched_at or "Unknown" }}</p>
   {% if litellm_models %}
+  <!-- Bulk Actions Bar -->
+  <div class="bulk-actions bulk-actions--hidden" id="bulkActions">
+    <div class="bulk-actions__info">
+      <span id="selectedCount">0</span> modelos seleccionados
+    </div>
+    <div class="bulk-actions__buttons">
+      <button type="button" class="btn-delete" id="bulkDelete">
+        Eliminar seleccionados
+      </button>
+      <button type="button" id="bulkCancel">
+        Cancelar
+      </button>
+    </div>
+  </div>
   <ul class="model-cards">
     {% for model in litellm_models %}
     {% set mappable = model.litellm_fields %}
-    <li class="model-card">
+    <li class="model-card" data-model-id="{{ model.id }}">
+      <!-- Checkbox -->
+      <div class="model-card__checkbox">
+        <input type="checkbox" class="model-checkbox" value="{{ model.id }}">
+      </div>
+
+      <!-- Model Header -->
       <div class="model-card__header">
         <div class="model-card__title">{{ model.id }}</div>
         {% if model.raw.get('details') %}
@@ -25,56 +45,40 @@
           {% endif %}
         </div>
         {% endif %}
-        <div class="model-card__meta">
-          {% if model.litellm_mode %}
-          <span class="badge badge-mode">{{ model.litellm_mode }}</span>
-          {% endif %}
-          {% if model.model_type %}
-          <span class="badge badge-type">{{ model.model_type }}</span>
-          {% endif %}
-          {% if mappable.get('litellm_provider') %}
-          <span class="badge badge-provider">{{ mappable.litellm_provider }}</span>
-          {% endif %}
-        </div>
       </div>
 
-      <!-- Capabilities Section -->
-      {% if model.capabilities %}
-      <div class="metadata-section metadata-section--capabilities">
-        <div class="metadata-section__title">Capacidades</div>
-        <div class="capabilities-grid">
-          {% for capability in model.capabilities %}
-          <div class="capability-item">{{ capability }}</div>
-          {% endfor %}
-        </div>
-      </div>
-      {% endif %}
+      <!-- Model Info -->
+      <div class="model-card__info">
+        <!-- Context Window -->
+        {% if model.max_input_tokens or model.context_window %}
+        <span class="badge">
+          Context: {{ "{:,}".format(model.max_input_tokens or model.context_window) }}
+        </span>
+        {% endif %}
 
-      <!-- Token Limits Section -->
-      <div class="metadata-section metadata-section--tokens">
-        <div class="metadata-section__title">Límites de Tokens</div>
-        <div class="token-limits">
-          {% if model.max_input_tokens or model.context_window %}
-          <div class="token-limit-item">
-            <span class="token-limit-item__label">Entrada (Context):</span>
-            <span class="token-limit-item__value">{{ "{:,}".format(model.max_input_tokens or model.context_window) }}</span>
-          </div>
-          {% endif %}
-          {% if model.max_output_tokens %}
-          <div class="token-limit-item">
-            <span class="token-limit-item__label">Salida:</span>
-            <span class="token-limit-item__value">{{ "{:,}".format(model.max_output_tokens) }}</span>
-          </div>
-          {% endif %}
-        </div>
+        <!-- Capabilities -->
+        {% if model.capabilities %}
+        {% for capability in model.capabilities[:3] %}
+        <span class="badge badge-support">{{ capability }}</span>
+        {% endfor %}
+        {% if model.capabilities|length > 3 %}
+        <span class="badge">+{{ model.capabilities|length - 3 }} más</span>
+        {% endif %}
+        {% endif %}
       </div>
 
+      <!-- Actions -->
       <div class="model-card__actions">
-        <button type="button" class="toggle-details" data-index="{{ loop.index0 }}">
-          Ver más información
+        <button type="button" class="btn-info toggle-details" data-index="{{ loop.index0 }}">
+          Info
+        </button>
+        <button type="button" class="btn-delete model-delete" data-model-id="{{ model.id }}">
+          Delete
         </button>
       </div>
-      <details class="model-card__details">
+
+      <!-- Details (hidden by default) -->
+      <details class="model-card__details" style="grid-column: 1 / -1; margin-top: 0.5rem;">
         <summary style="display: none;"></summary>
         <div class="model-card__details-content">
           <div class="litellm-fields-preview">
@@ -134,6 +138,73 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    const bulkActions = document.getElementById('bulkActions');
+    const selectedCount = document.getElementById('selectedCount');
+    const checkboxes = document.querySelectorAll('.model-checkbox');
+
+    // Update bulk actions visibility
+    function updateBulkActions() {
+      const checked = document.querySelectorAll('.model-checkbox:checked');
+      if (checked.length > 0) {
+        bulkActions.classList.remove('bulk-actions--hidden');
+        selectedCount.textContent = checked.length;
+      } else {
+        bulkActions.classList.add('bulk-actions--hidden');
+      }
+    }
+
+    // Checkbox selection
+    checkboxes.forEach((checkbox) => {
+      checkbox.addEventListener('change', (e) => {
+        const card = e.target.closest('.model-card');
+        if (e.target.checked) {
+          card.classList.add('model-card--selected');
+        } else {
+          card.classList.remove('model-card--selected');
+        }
+        updateBulkActions();
+      });
+    });
+
+    // Bulk cancel
+    document.getElementById('bulkCancel')?.addEventListener('click', () => {
+      checkboxes.forEach(cb => {
+        cb.checked = false;
+        cb.closest('.model-card').classList.remove('model-card--selected');
+      });
+      updateBulkActions();
+    });
+
+    // Bulk delete
+    document.getElementById('bulkDelete')?.addEventListener('click', async () => {
+      const checked = document.querySelectorAll('.model-checkbox:checked');
+      const modelIds = Array.from(checked).map(cb => cb.value);
+
+      if (!confirm(`¿Estás seguro de que quieres eliminar ${modelIds.length} modelos?`)) {
+        return;
+      }
+
+      // TODO: Implement actual delete endpoint
+      console.log('Deleting models:', modelIds);
+      alert('Funcionalidad de eliminación por lotes - pendiente de implementación en el backend');
+    });
+
+    // Individual delete
+    document.querySelectorAll('.model-delete').forEach((button) => {
+      button.addEventListener('click', async (e) => {
+        const modelId = e.target.dataset.modelId;
+
+        if (!confirm(`¿Estás seguro de que quieres eliminar el modelo ${modelId}?`)) {
+          return;
+        }
+
+        // TODO: Implement actual delete endpoint
+        console.log('Deleting model:', modelId);
+        alert('Funcionalidad de eliminación individual - pendiente de implementación en el backend');
+      });
+    });
+
+    // Toggle details
     document.querySelectorAll('.toggle-details').forEach((button) => {
       button.addEventListener('click', () => {
         const index = parseInt(button.dataset.index);
@@ -155,10 +226,10 @@
             rawPre.textContent = JSON.stringify(cleanedRaw, null, 2);
           }
           details.open = true;
-          button.textContent = 'Ocultar información';
+          button.textContent = 'Ocultar';
         } else {
           details.open = false;
-          button.textContent = 'Ver más información';
+          button.textContent = 'Info';
         }
       });
     });
