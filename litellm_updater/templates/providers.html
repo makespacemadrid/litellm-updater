@@ -123,34 +123,84 @@
     return Object.keys(cleaned).length > 0 ? cleaned : null;
   }
 
-  function describeLitellmModel(litellmModel = {}) {
-    const capabilityList = Array.isArray(litellmModel.capabilities) ? litellmModel.capabilities.join(', ') : '';
+  function buildLitellmFieldsHTML(litellmModel = {}) {
+    if (!litellmModel || Object.keys(litellmModel).length === 0) {
+      return '<p class="muted">No se encontraron campos compatibles con LiteLLM.</p>';
+    }
 
-    // Extract pricing information
+    const sections = [];
+
+    // Basic Information Section
+    const basicInfo = [];
+    if (litellmModel.litellm_provider) {
+      basicInfo.push(`<span class="badge badge-provider">Provider: ${litellmModel.litellm_provider}</span>`);
+    }
+    if (litellmModel.mode) {
+      basicInfo.push(`<span class="badge badge-mode">Mode: ${litellmModel.mode}</span>`);
+    }
+    if (litellmModel.model_type) {
+      basicInfo.push(`<span class="badge badge-type">Type: ${litellmModel.model_type}</span>`);
+    }
+    if (basicInfo.length > 0) {
+      sections.push(`<div class="litellm-section"><strong>Información básica:</strong><br>${basicInfo.join(' ')}</div>`);
+    }
+
+    // Token Limits Section
+    const tokenLimits = [];
+    if (litellmModel.max_input_tokens) {
+      tokenLimits.push(`<span class="badge">Max Input: ${litellmModel.max_input_tokens.toLocaleString()} tokens</span>`);
+    }
+    if (litellmModel.max_output_tokens) {
+      tokenLimits.push(`<span class="badge">Max Output: ${litellmModel.max_output_tokens.toLocaleString()} tokens</span>`);
+    }
+    if (litellmModel.max_tokens) {
+      tokenLimits.push(`<span class="badge">Max Total: ${litellmModel.max_tokens.toLocaleString()} tokens</span>`);
+    }
+    if (tokenLimits.length > 0) {
+      sections.push(`<div class="litellm-section"><strong>Límites de tokens:</strong><br>${tokenLimits.join(' ')}</div>`);
+    }
+
+    // Capabilities/Supports Section
+    const supports = [];
+    const supportFields = Object.keys(litellmModel).filter(k => k.startsWith('supports_'));
+    supportFields.forEach(field => {
+      if (litellmModel[field] === true) {
+        const label = field.replace('supports_', '').replace(/_/g, ' ');
+        supports.push(`<span class="badge badge-support">${label}</span>`);
+      }
+    });
+    if (supports.length > 0) {
+      sections.push(`<div class="litellm-section"><strong>Capacidades soportadas:</strong><br>${supports.join(' ')}</div>`);
+    }
+
+    // Pricing Section
     const pricing = [];
     if (litellmModel.input_cost_per_token) {
-      pricing.push(`Input: $${(litellmModel.input_cost_per_token * 1000).toFixed(4)}/1K tokens`);
+      pricing.push(`<span class="badge badge-price">Input: $${(litellmModel.input_cost_per_token * 1000).toFixed(4)}/1K tokens</span>`);
     }
     if (litellmModel.output_cost_per_token) {
-      pricing.push(`Output: $${(litellmModel.output_cost_per_token * 1000).toFixed(4)}/1K tokens`);
+      pricing.push(`<span class="badge badge-price">Output: $${(litellmModel.output_cost_per_token * 1000).toFixed(4)}/1K tokens</span>`);
     }
     if (litellmModel.input_cost_per_second) {
-      pricing.push(`Audio: $${(litellmModel.input_cost_per_second * 60).toFixed(4)}/minute`);
+      pricing.push(`<span class="badge badge-price">Audio Input: $${(litellmModel.input_cost_per_second * 60).toFixed(4)}/min</span>`);
+    }
+    if (litellmModel.output_cost_per_second) {
+      pricing.push(`<span class="badge badge-price">Audio Output: $${(litellmModel.output_cost_per_second * 60).toFixed(4)}/min</span>`);
     }
     if (litellmModel.output_cost_per_image) {
-      pricing.push(`Image: $${litellmModel.output_cost_per_image.toFixed(2)}/image`);
+      pricing.push(`<span class="badge badge-price">Image: $${litellmModel.output_cost_per_image.toFixed(2)}/image</span>`);
+    }
+    if (pricing.length > 0) {
+      sections.push(`<div class="litellm-section"><strong>Precios (ref. OpenAI):</strong><br>${pricing.join(' ')}</div>`);
     }
 
-    const parts = [
-      litellmModel.model_type ? `Tipo: ${litellmModel.model_type}` : null,
-      litellmModel.mode ? `Modo: ${litellmModel.mode}` : null,
-      litellmModel.context_window ? `Contexto: ${litellmModel.context_window.toLocaleString()} tokens` : null,
-      litellmModel.max_output_tokens ? `Salida máxima: ${litellmModel.max_output_tokens.toLocaleString()} tokens` : null,
-      capabilityList ? `Capacidades: ${capabilityList}` : null,
-      pricing.length > 0 ? `Precios (ref. OpenAI): ${pricing.join(', ')}` : null,
-    ].filter(Boolean);
+    // Supported OpenAI Parameters
+    if (Array.isArray(litellmModel.supported_openai_params) && litellmModel.supported_openai_params.length > 0) {
+      const params = litellmModel.supported_openai_params.map(p => `<span class="badge badge-param">${p}</span>`).join(' ');
+      sections.push(`<div class="litellm-section"><strong>Parámetros OpenAI soportados:</strong><br>${params}</div>`);
+    }
 
-    return parts.length > 0 ? parts.join(' · ') : 'No se encontraron campos compatibles con LiteLLM.';
+    return sections.join('');
   }
 
   function renderModels(container, sourceModels) {
@@ -165,32 +215,38 @@
     const fetchedAt = sourceModels.fetched_at || lastSynced || '';
     const items = sourceModels.models
       .map((model) => {
-        const mode = model.mode ? `Mode: ${model.mode}` : '';
-        const type = model.model_type ? `Type: ${model.model_type}` : '';
-        const ctx = model.context_window ? `Ctx: ${model.context_window.toLocaleString()} tokens` : '';
-        const maxOut = model.max_output_tokens ? `Max output: ${model.max_output_tokens.toLocaleString()} tokens` : '';
-        const caps = Array.isArray(model.capabilities) && model.capabilities.length > 0 ? `Capabilities: ${model.capabilities.join(', ')}` : '';
-        const tagSummary = buildTagSummary(model.raw);
-        const badges = [mode, type, ctx, maxOut, caps, ...tagSummary]
-          .filter(Boolean)
-          .map((badge) => `<span class="badge">${badge}</span>`)
-          .join('');
+        // Quick info badges for header
+        const quickBadges = [];
+        if (model.mode) quickBadges.push(`<span class="badge">Mode: ${model.mode}</span>`);
+        if (model.model_type) quickBadges.push(`<span class="badge">Type: ${model.model_type}</span>`);
+        if (model.context_window) quickBadges.push(`<span class="badge">Context: ${model.context_window.toLocaleString()} tokens</span>`);
 
-        const summaryText = tagSummary.length > 0 ? tagSummary.join(' · ') : 'Metadatos básicos no disponibles en /api/tags.';
+        const capabilities = Array.isArray(model.capabilities) && model.capabilities.length > 0
+          ? model.capabilities.join(', ')
+          : 'No capabilities specified';
+
         return `
           <li class="model-card">
             <div class="model-card__header">
-              <div>${model.id}</div>
-              <div class="model-card__meta">${badges}</div>
+              <div class="model-card__title">${model.id}</div>
+              <div class="model-card__meta">${quickBadges.join(' ')}</div>
             </div>
-            <div class="model-card__body">${summaryText}</div>
+            <div class="model-card__preview">
+              <strong>Capacidades:</strong> ${capabilities}
+            </div>
             <div class="model-card__actions">
-              <button type="button" class="model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">Ver detalles extendidos</button>
+              <button type="button" class="model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
+                Ver campos para LiteLLM
+              </button>
             </div>
             <details class="model-card__details">
               <summary style="display: none;"></summary>
               <div class="model-card__details-content">
-                <pre class="model-card__body"></pre>
+                <div class="litellm-fields-preview">Cargando...</div>
+                <details class="raw-data-toggle">
+                  <summary>Ver datos completos (JSON)</summary>
+                  <pre class="raw-data-json"></pre>
+                </details>
               </div>
             </details>
           </li>
@@ -234,19 +290,20 @@
         const modelId = button.dataset.modelId;
         const card = button.closest('.model-card');
         const details = card.querySelector('.model-card__details');
-        const target = details.querySelector('pre');
+        const fieldsPreview = details.querySelector('.litellm-fields-preview');
+        const rawDataJson = details.querySelector('.raw-data-json');
 
         // Toggle details
         const isOpen = details.open;
         if (isOpen) {
           details.open = false;
-          button.textContent = 'Ver detalles extendidos';
+          button.textContent = 'Ver campos para LiteLLM';
           return;
         }
 
         details.open = true;
-        button.textContent = 'Ocultar información';
-        target.textContent = 'Cargando información...';
+        button.textContent = 'Ocultar campos';
+        fieldsPreview.innerHTML = '<p class="muted">Cargando información...</p>';
 
         try {
           const params = new URLSearchParams({ source: sourceName, model: modelId });
@@ -254,31 +311,37 @@
             headers: { Accept: 'application/json' },
           });
           if (!response.ok) {
-            target.textContent = `No se pudo cargar la información (${response.status}).`;
+            fieldsPreview.innerHTML = `<p class="error">No se pudo cargar la información (${response.status}).</p>`;
             return;
           }
 
           const payload = await response.json();
-          const litellmMapping = describeLitellmModel(payload?.litellm_model || {});
+          const litellmModel = payload?.litellm_model || {};
           const rawDetails = payload?.raw || payload || {};
 
-          // Clean the JSON data
-          const cleanedLitellmModel = cleanJSON(payload?.litellm_model || {});
+          // Build the LiteLLM fields HTML
+          const fieldsHTML = buildLitellmFieldsHTML(litellmModel);
+          fieldsPreview.innerHTML = `
+            <div class="litellm-import-preview">
+              <h4>Campos que se importarán a LiteLLM:</h4>
+              ${fieldsHTML}
+            </div>
+          `;
+
+          // Clean and display JSON data
+          const cleanedLitellmModel = cleanJSON(litellmModel);
           const cleanedRawDetails = cleanJSON(rawDetails);
 
-          target.textContent = [
-            'Datos mapeables a LiteLLM:',
-            litellmMapping,
-            '',
-            'Modelo normalizado para LiteLLM:',
+          rawDataJson.textContent = [
+            '// Modelo normalizado para LiteLLM (estos campos se sincronizarán):',
             JSON.stringify(cleanedLitellmModel, null, 2),
             '',
-            'Respuesta completa de Ollama:',
+            '// Respuesta completa del provider:',
             JSON.stringify(cleanedRawDetails, null, 2),
           ].join('\n');
         } catch (error) {
           console.error('Failed loading model details', error);
-          target.textContent = 'No se pudo cargar la información extendida.';
+          fieldsPreview.innerHTML = '<p class="error">No se pudo cargar la información extendida.</p>';
         }
       });
     });
