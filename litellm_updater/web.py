@@ -141,11 +141,11 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    init_session_maker(engine)
+    session_maker = init_session_maker(engine)
     logger.info("Database initialized successfully")
 
-    # Start scheduler
-    task = asyncio.create_task(start_scheduler(load_config, sync_state.update))
+    # Start scheduler with database session maker
+    task = asyncio.create_task(start_scheduler(load_config, sync_state.update, session_maker))
 
     try:
         yield
@@ -588,11 +588,205 @@ def create_app() -> FastAPI:
 
         return RedirectResponse(url="/admin", status_code=303)
 
+    # Provider CRUD endpoints (database-first)
+
+    @app.post("/admin/providers")
+    async def create_provider_endpoint(
+        session: AsyncSession = Depends(get_session),
+        name: str = Form(...),
+        base_url: str = Form(...),
+        type: str = Form(...),
+        api_key: str | None = Form(None),
+        prefix: str | None = Form(None),
+        default_ollama_mode: str | None = Form(None),
+    ):
+        """Create a new provider in the database."""
+        from .crud import create_provider, get_provider_by_name
+
+        # Check if provider already exists
+        existing = await get_provider_by_name(session, name)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Provider with name '{name}' already exists",
+            )
+
+        # Validate type
+        if type not in ("ollama", "litellm"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Type must be 'ollama' or 'litellm'"
+            )
+
+        # Validate ollama_mode
+        if default_ollama_mode and type != "ollama":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="default_ollama_mode is only valid for Ollama providers",
+            )
+
+        if default_ollama_mode and default_ollama_mode not in ("ollama", "openai"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="default_ollama_mode must be 'ollama' or 'openai'",
+            )
+
+        try:
+            await create_provider(
+                session,
+                name=name,
+                base_url=base_url,
+                type_=type,
+                api_key=api_key or None,
+                prefix=prefix or None,
+                default_ollama_mode=default_ollama_mode or None,
+            )
+            logger.info("Created provider: %s (%s) at %s", name, type, base_url)
+        except Exception as exc:
+            logger.exception("Failed to create provider")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create provider: {str(exc)}",
+            )
+
+        return RedirectResponse(url="/admin", status_code=303)
+
+    @app.post("/admin/providers/{provider_id}")
+    async def update_provider_endpoint(
+        provider_id: int,
+        session: AsyncSession = Depends(get_session),
+        name: str | None = Form(None),
+        base_url: str | None = Form(None),
+        type: str | None = Form(None),
+        api_key: str | None = Form(None),
+        prefix: str | None = Form(None),
+        default_ollama_mode: str | None = Form(None),
+    ):
+        """Update an existing provider."""
+        from .crud import get_provider_by_id, update_provider
+
+        provider = await get_provider_by_id(session, provider_id)
+        if not provider:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
+
+        # Validate type if provided
+        if type and type not in ("ollama", "litellm"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Type must be 'ollama' or 'litellm'"
+            )
+
+        # Validate ollama_mode
+        final_type = type or provider.type
+        if default_ollama_mode and final_type != "ollama":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="default_ollama_mode is only valid for Ollama providers",
+            )
+
+        if default_ollama_mode and default_ollama_mode not in ("ollama", "openai"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="default_ollama_mode must be 'ollama' or 'openai'",
+            )
+
+        try:
+            await update_provider(
+                session,
+                provider,
+                name=name,
+                base_url=base_url,
+                type_=type,
+                api_key=api_key,
+                prefix=prefix,
+                default_ollama_mode=default_ollama_mode,
+            )
+            logger.info("Updated provider: %s", provider.name)
+        except Exception as exc:
+            logger.exception("Failed to update provider")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update provider: {str(exc)}",
+            )
+
+        return RedirectResponse(url="/admin", status_code=303)
+
+    @app.delete("/admin/providers/{provider_id}")
+    async def delete_provider_endpoint(
+        provider_id: int, session: AsyncSession = Depends(get_session)
+    ):
+        """Delete a provider (cascades to models)."""
+        from .crud import delete_provider, get_provider_by_id
+
+        provider = await get_provider_by_id(session, provider_id)
+        if not provider:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
+
+        try:
+            await delete_provider(session, provider)
+            logger.info("Deleted provider: %s", provider.name)
+        except Exception as exc:
+            logger.exception("Failed to delete provider")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to delete provider: {str(exc)}",
+            )
+
+        return JSONResponse(content={"status": "deleted"}, status_code=200)
+
+    @app.post("/admin/migrate-to-db")
+    async def migrate_to_db_endpoint(session: AsyncSession = Depends(get_session)):
+        """Migrate sources from config.json to database."""
+        from .config_db import migrate_sources_to_db
+
+        try:
+            migrated = await migrate_sources_to_db(session)
+
+            if migrated == 0:
+                # Check if there were no sources or if migration already happened
+                from .crud import get_all_providers
+                existing_providers = await get_all_providers(session)
+
+                if existing_providers:
+                    logger.info("Migration skipped: database already has %d providers", len(existing_providers))
+                    return JSONResponse(
+                        content={
+                            "status": "skipped",
+                            "message": f"Database already has {len(existing_providers)} providers. Migration not needed.",
+                            "migrated": 0
+                        },
+                        status_code=200
+                    )
+                else:
+                    logger.info("Migration skipped: no sources in config.json")
+                    return JSONResponse(
+                        content={
+                            "status": "skipped",
+                            "message": "No sources in config.json to migrate.",
+                            "migrated": 0
+                        },
+                        status_code=200
+                    )
+
+            logger.info("Migration completed: %d sources migrated to database", migrated)
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "message": f"Successfully migrated {migrated} source(s) to database.",
+                    "migrated": migrated
+                },
+                status_code=200
+            )
+        except Exception as exc:
+            logger.exception("Failed to migrate sources to database")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Migration failed: {str(exc)}"
+            )
+
     @app.post("/sync")
-    async def run_sync():
+    async def run_sync(session: AsyncSession = Depends(get_session)):
         config = load_config()
         try:
-            results = await sync_once(config)
+            results = await sync_once(config, session)
             await sync_state.update(results)
         except (httpx.HTTPError, ValueError) as exc:  # pragma: no cover - expected errors
             logger.warning("Manual sync failed: %s", exc)
@@ -913,11 +1107,11 @@ def create_app() -> FastAPI:
             )
 
     @app.post("/api/sync")
-    async def api_sync():
+    async def api_sync(session: AsyncSession = Depends(get_session)):
         """Trigger a manual sync via API."""
         config = load_config()
         try:
-            results = await sync_once(config)
+            results = await sync_once(config, session)
             await sync_state.update(results)
             model_count = sum(len(source_models.models) for source_models in results.values())
             return {

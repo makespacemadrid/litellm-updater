@@ -44,11 +44,12 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-def init_session_maker(engine: AsyncEngine) -> None:
-    """Initialize the global session maker."""
+def init_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """Initialize the global session maker and return it."""
     global async_session_maker
     async_session_maker = async_sessionmaker(
         engine,
         class_=AsyncSession,
         expire_on_commit=False,
     )
+    return async_session_maker

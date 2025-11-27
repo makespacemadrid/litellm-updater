@@ -6,6 +6,7 @@ import logging
 from typing import Callable
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import AppConfig, ModelMetadata, SourceEndpoint, SourceModels
 from .sources import DEFAULT_TIMEOUT, _make_auth_headers, fetch_source_models
@@ -25,9 +26,10 @@ async def _register_model_with_litellm(
     response.raise_for_status()
 
 
-async def sync_once(config: AppConfig) -> dict[str, SourceModels]:
+async def sync_once(config: AppConfig, session: AsyncSession | None = None) -> dict[str, SourceModels]:
     """Run a single synchronization loop.
 
+    If a database session is provided, models are persisted to the database.
     Returns mapping from source name to fetched models.
     """
 
@@ -52,6 +54,37 @@ async def sync_once(config: AppConfig) -> dict[str, SourceModels]:
                 logger.exception("Unexpected error syncing source %s", source.name)
                 continue
 
+            # Persist models to database if session provided
+            if session:
+                try:
+                    from .crud import get_provider_by_name, mark_orphaned_models, upsert_model
+
+                    # Get provider from database
+                    provider = await get_provider_by_name(session, source.name)
+                    if not provider:
+                        logger.warning("Provider %s not found in database; skipping persistence", source.name)
+                    else:
+                        # Upsert all fetched models
+                        active_model_ids = set()
+                        for model in source_models.models:
+                            try:
+                                await upsert_model(session, provider, model)
+                                active_model_ids.add(model.id)
+                            except Exception as exc:
+                                logger.error("Failed to persist model %s from %s: %s", model.id, source.name, exc)
+
+                        # Mark models not in this fetch as orphaned
+                        orphaned_count = await mark_orphaned_models(session, provider, active_model_ids)
+                        if orphaned_count > 0:
+                            logger.info("Marked %d models as orphaned for provider %s", orphaned_count, source.name)
+
+                        # Commit the changes for this provider
+                        await session.commit()
+                        logger.info("Persisted %d models for provider %s", len(active_model_ids), source.name)
+                except Exception:  # pragma: no cover - unexpected errors
+                    logger.exception("Failed to persist models for source %s", source.name)
+                    await session.rollback()
+
             if not config.litellm.configured:
                 logger.info("LiteLLM target not configured; skipping registration for %s", source.name)
                 continue
@@ -74,8 +107,18 @@ async def sync_once(config: AppConfig) -> dict[str, SourceModels]:
     return results
 
 
-async def start_scheduler(config_loader: Callable[[], AppConfig], store_callback) -> None:
-    """Continuously run sync at the configured interval and push results to the store callback."""
+async def start_scheduler(
+    config_loader: Callable[[], AppConfig],
+    store_callback,
+    session_maker: Callable | None = None,
+) -> None:
+    """Continuously run sync at the configured interval and push results to the store callback.
+
+    Args:
+        config_loader: Function to load the application config
+        store_callback: Callback to store sync results (for SyncState)
+        session_maker: Optional async session maker for database persistence
+    """
 
     logger.info("Starting scheduler")
     while True:
@@ -96,8 +139,18 @@ async def start_scheduler(config_loader: Callable[[], AppConfig], store_callback
             continue
 
         try:
-            results = await sync_once(config)
-            await store_callback(results)
+            # Create database session if session_maker provided
+            if session_maker:
+                async with session_maker() as session:
+                    try:
+                        results = await sync_once(config, session)
+                        await store_callback(results)
+                    except Exception:  # pragma: no cover - unexpected errors
+                        logger.exception("Sync loop failed")
+                        await session.rollback()
+            else:
+                results = await sync_once(config)
+                await store_callback(results)
         except Exception:  # pragma: no cover - unexpected errors
             logger.exception("Sync loop failed")
 
