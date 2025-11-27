@@ -13,3 +13,6 @@ __pycache__/
 dist/
 build/
 *.egg
+
+# User-specific configuration (contains API keys and URLs)
+data/config.json

@@ -7,6 +7,14 @@
   {% else %}
   <p class="muted">Fetched at {{ fetched_at or "Unknown" }}</p>
   {% if litellm_models %}
+  <!-- Selection Controls -->
+  <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem;">
+    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+      <input type="checkbox" id="selectAll" style="cursor: pointer;">
+      <span>Seleccionar todos</span>
+    </label>
+  </div>
+
   <!-- Bulk Actions Bar -->
   <div class="bulk-actions bulk-actions--hidden" id="bulkActions">
     <div class="bulk-actions__info">
@@ -24,10 +32,10 @@
   <ul class="model-cards">
     {% for model in litellm_models %}
     {% set mappable = model.litellm_fields %}
-    <li class="model-card" data-model-id="{{ model.id }}">
+    <li class="model-card" data-model-id="{{ model.database_id or model.id }}">
       <!-- Checkbox -->
       <div class="model-card__checkbox">
-        <input type="checkbox" class="model-checkbox" value="{{ model.id }}">
+        <input type="checkbox" class="model-checkbox" value="{{ model.database_id or model.id }}">
       </div>
 
       <!-- Model Header -->
@@ -75,7 +83,7 @@
         <button type="button" class="btn-info toggle-details" data-index="{{ loop.index0 }}">
           Info
         </button>
-        <button type="button" class="btn-delete model-delete" data-model-id="{{ model.id }}">
+        <button type="button" class="btn-delete model-delete" data-model-id="{{ model.database_id or model.id }}">
           Delete
         </button>
       </div>
@@ -143,9 +151,10 @@
   document.addEventListener('DOMContentLoaded', () => {
     const bulkActions = document.getElementById('bulkActions');
     const selectedCount = document.getElementById('selectedCount');
+    const selectAllCheckbox = document.getElementById('selectAll');
     const checkboxes = document.querySelectorAll('.model-checkbox');
 
-    // Update bulk actions visibility
+    // Update bulk actions visibility and select all checkbox state
     function updateBulkActions() {
       const checked = document.querySelectorAll('.model-checkbox:checked');
       if (checked.length > 0) {
@@ -154,7 +163,35 @@
       } else {
         bulkActions.classList.add('bulk-actions--hidden');
       }
+
+      // Update select all checkbox state
+      if (selectAllCheckbox) {
+        if (checked.length === 0) {
+          selectAllCheckbox.checked = false;
+          selectAllCheckbox.indeterminate = false;
+        } else if (checked.length === checkboxes.length) {
+          selectAllCheckbox.checked = true;
+          selectAllCheckbox.indeterminate = false;
+        } else {
+          selectAllCheckbox.checked = false;
+          selectAllCheckbox.indeterminate = true;
+        }
+      }
     }
+
+    // Select all checkbox
+    selectAllCheckbox?.addEventListener('change', (e) => {
+      checkboxes.forEach(checkbox => {
+        checkbox.checked = e.target.checked;
+        const card = checkbox.closest('.model-card');
+        if (e.target.checked) {
+          card.classList.add('model-card--selected');
+        } else {
+          card.classList.remove('model-card--selected');
+        }
+      });
+      updateBulkActions();
+    });
 
     // Checkbox selection
     checkboxes.forEach((checkbox) => {

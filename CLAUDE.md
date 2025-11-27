@@ -57,6 +57,80 @@ ruff check .
 ruff format .
 ```
 
+## Deployment & Live Testing
+
+### Detecting Docker Deployment
+
+**IMPORTANT**: If a `.env` file exists in the project root directory, the service is running in Docker Compose. This means:
+- Changes to Python code require rebuilding the Docker image
+- The service is accessible at the configured PORT (check `docker-compose.yml` or `.env`)
+- Data is persisted in `./data` volume mount
+- Live testing can be performed against the running instance
+
+### Making Code Changes in Docker Deployment
+
+When the service is running via Docker Compose (`.env` exists):
+
+```bash
+# 1. Make your code changes to Python files
+
+# 2. REBUILD the Docker image (required for code changes to take effect)
+docker compose build litellm-updater
+
+# 3. Restart the service with the new image
+docker compose restart litellm-updater
+
+# 4. Verify the service is running
+docker compose logs --tail=20 litellm-updater
+
+# Alternative: Build and restart in one command
+docker compose up --build -d litellm-updater
+```
+
+**Why rebuild is necessary**: The Docker image copies the Python code during build. Simply restarting won't pick up code changes - you must rebuild the image first.
+
+### Live Testing
+
+When deployed via Docker Compose, the service is typically accessible at:
+- Web UI: `http://localhost:<PORT>` (check `.env` or `docker-compose.yml` for PORT)
+- Common routes for testing:
+  - `/` - Dashboard
+  - `/sources` - View source models
+  - `/litellm` - View LiteLLM destination models
+  - `/admin` - Configure sources and sync
+
+Example workflow for testing a fix:
+```bash
+# 1. Make code changes
+# 2. Rebuild and restart
+docker compose build litellm-updater && docker compose restart litellm-updater
+
+# 3. Test in browser or via curl
+curl http://localhost:8005/
+
+# 4. Check logs for errors
+docker compose logs -f litellm-updater
+```
+
+### Checking Service Status
+
+```bash
+# View running containers
+docker compose ps
+
+# Follow logs in real-time
+docker compose logs -f litellm-updater
+
+# Check last N log lines
+docker compose logs --tail=50 litellm-updater
+
+# Restart all services
+docker compose restart
+
+# Stop all services
+docker compose down
+```
+
 ## Architecture
 
 ### Core Components
@@ -71,9 +145,13 @@ ruff format .
 - `fetch_source_models()` dispatches to the correct fetcher based on `SourceType`
 - Ollama fetcher includes `_clean_ollama_payload()` to strip large/redundant fields (tensors, modelfile, license)
 - For LiteLLM sources, fetches list then individual model details from `/v1/models/{id}`
+- `fetch_litellm_target_models()` uses LiteLLM's `/model/info` endpoint which includes model UUIDs and complete metadata
 
 **Model Normalization** (`models.py`)
 - `ModelMetadata.from_raw()` normalizes diverse upstream formats into consistent structure
+- Supports `database_id` parameter for LiteLLM models to separate display name (`id`) from database UUID (`database_id`)
+  - Display name used in UI (e.g., "ollama/qwen3:8b")
+  - Database UUID used for deletion operations (e.g., "3dbd2639-ccf1-4628-86ff-60a8e9d93fce")
 - Extraction functions (`_extract_numeric`, `_extract_text`, `_extract_capabilities`) search multiple nested sections (metadata, details, model_info, summary)
 - `litellm_fields` property maps normalized metadata to LiteLLM-compatible fields including:
   - Context window and token limits
@@ -83,10 +161,17 @@ ruff format .
 - Always sets `litellm_provider: "ollama"` for Ollama models
 
 **Synchronization** (`sync.py`)
-- `sync_once()` fetches models from all sources and registers them with LiteLLM via `/router/model/add`
+- `sync_once()` fetches models from all sources and registers them with LiteLLM via `/model/new`
 - `start_scheduler()` runs sync in a loop at configured interval (disabled if interval ≤ 0)
 - Registration only happens when LiteLLM is configured; fetching always occurs
 - Errors are logged but don't stop sync for other sources/models
+
+**LiteLLM Integration** (`web.py`)
+- Model registration: `POST /model/new` with `{model_name, litellm_params, model_info}`
+  - `litellm_params`: Connection configuration (model, api_base)
+  - `model_info`: Metadata fields (max_tokens, capabilities, pricing, etc.)
+- Model deletion: `POST /model/delete` with `{id: <database_uuid>}`
+- Model listing: `GET /model/info` returns complete model data including database UUIDs
 
 **Web Layer** (`web.py`)
 - FastAPI app with Jinja2 templates and static files
@@ -110,9 +195,11 @@ ruff format .
 2. Scheduler (or manual trigger) calls `sync_once()`
 3. For each source, `fetch_source_models()` retrieves raw model list
 4. Each raw model is normalized via `ModelMetadata.from_raw()`
-5. If LiteLLM configured, each model is POSTed to `/router/model/add`
+5. If LiteLLM configured, each model is POSTed to `/model/new` with separated `litellm_params` and `model_info`
 6. Results are stored in `SyncState` for UI display
 7. UI can fetch extended Ollama details via `/models/show` which uses `ModelDetailsCache`
+8. `/litellm` page fetches models via `/model/info` endpoint to get database UUIDs for deletion
+9. Delete operations use database UUID from `model_info.id`, not the model name
 
 ### Important Patterns
 

@@ -760,13 +760,6 @@
     });
   }
 
-  document.querySelectorAll('.refresh-form').forEach((form) => {
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      await refreshSource(form);
-    });
-  });
-
   // Bind event listeners to initially server-rendered model cards
   function bindInitialModelActions() {
     document.querySelectorAll('.models-area').forEach((container) => {
@@ -774,15 +767,27 @@
     });
   }
 
+  // Bind refresh form event listeners
+  function bindRefreshForms() {
+    document.querySelectorAll('.refresh-form').forEach((form) => {
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        await refreshSource(form);
+      });
+    });
+  }
+
   // Initialize on page load
   document.addEventListener('DOMContentLoaded', () => {
     bindInitialModelActions();
+    bindRefreshForms();
     loadModels();
     setupEditDialog();
   });
 
   // Also bind immediately in case DOMContentLoaded already fired
   bindInitialModelActions();
+  bindRefreshForms();
   loadModels();
   setupEditDialog();
 </script>

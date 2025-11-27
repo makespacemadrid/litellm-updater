@@ -128,25 +128,53 @@ async def fetch_litellm_models(client: httpx.AsyncClient, source: SourceEndpoint
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:  # pragma: no cover - upstream compatibility varies
             logger.debug("Failed fetching details for %s from %s: %s", model_id, source.base_url, exc)
 
-        results.append(ModelMetadata.from_raw(model_id, raw_model))
+        # For LiteLLM sources, extract database ID from model_info
+        database_id = None
+        if isinstance(raw_model, dict):
+            model_info = raw_model.get("model_info", {})
+            if isinstance(model_info, dict):
+                database_id = model_info.get("id")
+
+        results.append(ModelMetadata.from_raw(model_id, raw_model, database_id=database_id))
 
     return results
 
 
 async def fetch_litellm_target_models(target: LitellmDestination) -> list[ModelMetadata]:
-    """Fetch models directly from the configured LiteLLM endpoint."""
+    """Fetch models directly from the configured LiteLLM endpoint using /model/info."""
 
     if not target.base_url:
         raise ValueError("LiteLLM endpoint is not configured")
 
-    source = SourceEndpoint(
-        name="LiteLLM",
-        base_url=target.normalized_base_url,
-        type=SourceType.LITELLM,
-        api_key=target.api_key,
-    )
+    # Use /model/info endpoint which returns complete model data including UUIDs
+    url = f"{target.normalized_base_url}/model/info"
+    headers = _make_auth_headers(target.api_key)
+
     async with httpx.AsyncClient() as client:
-        return await fetch_litellm_models(client, source)
+        response = await client.get(url, headers=headers, timeout=DEFAULT_TIMEOUT)
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise ValueError(f"Invalid JSON response from LiteLLM server: {exc}") from exc
+
+        models = payload.get("data", [])
+        results: list[ModelMetadata] = []
+
+        for model in models:
+            # Use model_name as the display ID
+            model_name = model.get("model_name", "unknown")
+
+            # Extract UUID from model_info.id for deletion operations
+            database_id = None
+            model_info = model.get("model_info", {})
+            if isinstance(model_info, dict):
+                database_id = model_info.get("id")
+
+            # Use the complete model object as raw data
+            results.append(ModelMetadata.from_raw(model_name, model, database_id=database_id))
+
+        return results
 
 
 async def fetch_source_models(source: SourceEndpoint) -> SourceModels:

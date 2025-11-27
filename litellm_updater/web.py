@@ -149,9 +149,9 @@ async def lifespan(app: FastAPI):
 async def _delete_model_from_litellm(
     client: httpx.AsyncClient, litellm_base_url: str, api_key: str | None, model_id: str
 ) -> None:
-    """Delete a model from LiteLLM."""
-    url = f"{litellm_base_url}/router/model/delete"
-    headers = {}
+    """Delete a model from LiteLLM using /model/delete endpoint."""
+    url = f"{litellm_base_url}/model/delete"
+    headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
@@ -161,17 +161,75 @@ async def _delete_model_from_litellm(
 
 
 async def _add_model_to_litellm(
-    litellm_base_url: str, api_key: str | None, model_name: str, model_params: dict | None = None
+    litellm_base_url: str, api_key: str | None, model_name: str, model_params: dict | None = None,
+    source_base_url: str | None = None
 ) -> dict:
-    """Add a single model to LiteLLM."""
-    url = f"{litellm_base_url}/router/model/add"
-    headers = {}
+    """Add a single model to LiteLLM using /model/new endpoint.
+
+    Args:
+        litellm_base_url: Base URL of LiteLLM instance
+        api_key: API key for authentication
+        model_name: Name of the model (e.g., "qwen3:8b")
+        model_params: Additional LiteLLM parameters (optional)
+        source_base_url: Base URL of the source (for Ollama models)
+    """
+    url = f"{litellm_base_url}/model/new"
+    headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    payload = {"model_name": model_name}
+    # Construct payload for LiteLLM's /model/new endpoint
+    # For Ollama models, prefix with "ollama/" and set api_base
+    litellm_model_name = f"ollama/{model_name}"
+
+    # litellm_params: Only configuration for connecting to the model
+    litellm_params = {
+        "model": litellm_model_name,
+    }
+
+    # Add source base URL if provided (for Ollama)
+    if source_base_url:
+        litellm_params["api_base"] = source_base_url
+
+    # model_info: Metadata about the model (capabilities, pricing, limits, etc.)
+    model_info = {}
+
+    # Separate model_params into litellm_params and model_info
     if model_params:
-        payload.update(model_params)
+        # Fields that go in litellm_params (connection config)
+        connection_fields = ["model", "api_base", "api_key", "custom_llm_provider"]
+
+        # Fields that go in model_info (metadata)
+        metadata_fields = [
+            "max_input_tokens", "max_output_tokens", "max_tokens",
+            "input_cost_per_token", "output_cost_per_token",
+            "input_cost_per_second", "output_cost_per_second",
+            "output_cost_per_image", "litellm_provider",
+            "supported_openai_params"
+        ]
+
+        for key, value in model_params.items():
+            if value is None:  # Skip None values
+                continue
+
+            # Fields starting with "supports_" go to model_info
+            if key.startswith("supports_"):
+                model_info[key] = value
+            # Known metadata fields go to model_info
+            elif key in metadata_fields:
+                model_info[key] = value
+            # Connection fields go to litellm_params (if not already set)
+            elif key in connection_fields and key not in litellm_params:
+                litellm_params[key] = value
+
+    payload = {
+        "model_name": litellm_model_name,
+        "litellm_params": litellm_params
+    }
+
+    # Only include model_info if it has content
+    if model_info:
+        payload["model_info"] = model_info
 
     async with httpx.AsyncClient() as client:
         response = await client.post(url, json=payload, headers=headers, timeout=30.0)
@@ -253,68 +311,112 @@ def create_app() -> FastAPI:
 
     @app.get("/models/show")
     async def model_details(source: str, model: str):
-        """Fetch extended Ollama model details on demand.
+        """Fetch extended model details on demand.
 
-        Only Ollama sources support the `/api/show` endpoint. The handler returns a
-        404 when the requested source is missing or not an Ollama provider.
+        For Ollama sources, fetches detailed information via `/api/show` endpoint.
+        For LiteLLM sources, returns the model metadata from sync state.
         """
 
         config = load_config()
         source_endpoint = next((item for item in config.sources if item.name == source), None)
-        if not source_endpoint or source_endpoint.type is not SourceType.OLLAMA:
-            raise HTTPException(status_code=404, detail="Source not found or unsupported")
+        if not source_endpoint:
+            raise HTTPException(status_code=404, detail="Source not found")
 
+        # Check cache first
         cached = await model_details_cache.get(source_endpoint.name, model)
         if cached:
             return cached
 
-        try:
-            raw_details = await fetch_ollama_model_details(source_endpoint, model)
-            litellm_model = ModelMetadata.from_raw(model, raw_details)
+        # Handle Ollama sources with detailed fetch
+        if source_endpoint.type is SourceType.OLLAMA:
+            try:
+                raw_details = await fetch_ollama_model_details(source_endpoint, model)
+                litellm_model = ModelMetadata.from_raw(model, raw_details)
+                payload = {
+                    "source": source_endpoint.name,
+                    "model": model,
+                    "fetched_at": datetime.now(UTC),
+                    "litellm_model": litellm_model.litellm_fields,
+                    "raw": raw_details,
+                }
+                await model_details_cache.set(source_endpoint.name, model, payload)
+                return payload
+            except httpx.HTTPStatusError as exc:
+                logger.error("HTTP error fetching Ollama model details for %s: %s - %s", model, exc.response.status_code, exc.response.text)
+                raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
+            except httpx.RequestError as exc:
+                logger.error("Network error fetching Ollama model details for %s: %s", model, exc)
+                raise HTTPException(status_code=502, detail=f"Network error: {str(exc)}")
+            except Exception as exc:
+                logger.exception("Unexpected error fetching Ollama model details for %s", model)
+                raise HTTPException(status_code=500, detail=f"Internal error: {type(exc).__name__}: {str(exc)}")
+
+        # Handle LiteLLM sources from sync state
+        else:
+            models_dict = await sync_state.get_models()
+            source_models = models_dict.get(source)
+            if not source_models:
+                raise HTTPException(status_code=404, detail=f"No models found for source '{source}'. Try refreshing first.")
+
+            model_metadata = next((m for m in source_models.models if m.id == model), None)
+            if not model_metadata:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not found in source '{source}'")
+
             payload = {
                 "source": source_endpoint.name,
                 "model": model,
-                "fetched_at": datetime.now(UTC),
-                "litellm_model": litellm_model.litellm_fields,
-                "raw": raw_details,
+                "fetched_at": source_models.fetched_at or datetime.now(UTC),
+                "litellm_model": model_metadata.litellm_fields,
+                "raw": model_metadata.raw,
             }
             await model_details_cache.set(source_endpoint.name, model, payload)
             return payload
-        except httpx.HTTPStatusError as exc:
-            logger.error("HTTP error fetching Ollama model details for %s: %s - %s", model, exc.response.status_code, exc.response.text)
-            raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
-        except httpx.RequestError as exc:
-            logger.error("Network error fetching Ollama model details for %s: %s", model, exc)
-            raise HTTPException(status_code=502, detail=f"Network error: {str(exc)}")
-        except Exception as exc:
-            logger.exception("Unexpected error fetching Ollama model details for %s", model)
-            raise HTTPException(status_code=500, detail=f"Internal error: {type(exc).__name__}: {str(exc)}")
 
     @app.post("/models/cache")
     async def update_model_cache(payload: CacheUpdateRequest):
-        """Allow overriding cached Ollama details from the UI."""
+        """Allow overriding cached model details from the UI."""
 
         config = load_config()
         source_endpoint = next((item for item in config.sources if item.name == payload.source), None)
-        if not source_endpoint or source_endpoint.type is not SourceType.OLLAMA:
-            raise HTTPException(status_code=404, detail="Source not found or unsupported")
+        if not source_endpoint:
+            raise HTTPException(status_code=404, detail="Source not found")
 
         cached = await model_details_cache.get(source_endpoint.name, payload.model)
         if not cached:
-            try:
-                raw_details = await fetch_ollama_model_details(source_endpoint, payload.model)
-                litellm_model = ModelMetadata.from_raw(payload.model, raw_details).litellm_fields
+            # For Ollama sources, fetch detailed information
+            if source_endpoint.type is SourceType.OLLAMA:
+                try:
+                    raw_details = await fetch_ollama_model_details(source_endpoint, payload.model)
+                    litellm_model = ModelMetadata.from_raw(payload.model, raw_details).litellm_fields
+                    cached = {
+                        "source": source_endpoint.name,
+                        "model": payload.model,
+                        "fetched_at": datetime.now(UTC),
+                        "litellm_model": litellm_model,
+                        "raw": raw_details,
+                    }
+                except httpx.HTTPStatusError as exc:
+                    raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
+                except httpx.RequestError as exc:
+                    raise HTTPException(status_code=502, detail=str(exc))
+            # For LiteLLM sources, get from sync state
+            else:
+                models_dict = await sync_state.get_models()
+                source_models = models_dict.get(payload.source)
+                if not source_models:
+                    raise HTTPException(status_code=404, detail=f"No models found for source '{payload.source}'. Try refreshing first.")
+
+                model_metadata = next((m for m in source_models.models if m.id == payload.model), None)
+                if not model_metadata:
+                    raise HTTPException(status_code=404, detail=f"Model '{payload.model}' not found in source '{payload.source}'")
+
                 cached = {
                     "source": source_endpoint.name,
                     "model": payload.model,
-                    "fetched_at": datetime.now(UTC),
-                    "litellm_model": litellm_model,
-                    "raw": raw_details,
+                    "fetched_at": source_models.fetched_at or datetime.now(UTC),
+                    "litellm_model": model_metadata.litellm_fields,
+                    "raw": model_metadata.raw,
                 }
-            except httpx.HTTPStatusError as exc:
-                raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
-            except httpx.RequestError as exc:
-                raise HTTPException(status_code=502, detail=str(exc))
 
         updated_payload = {**cached, "litellm_model": payload.litellm_model, "fetched_at": datetime.now(UTC)}
         await model_details_cache.update(source_endpoint.name, payload.model, updated_payload)
@@ -545,7 +647,8 @@ def create_app() -> FastAPI:
                 config.litellm.normalized_base_url,
                 config.litellm.api_key,
                 model_metadata.id,
-                model_metadata.litellm_fields
+                model_metadata.litellm_fields,
+                source_endpoint.normalized_base_url
             )
             logger.info("Successfully added model %s from %s to LiteLLM", model, source)
         except httpx.HTTPStatusError as exc:
@@ -737,7 +840,8 @@ def create_app() -> FastAPI:
                 config.litellm.normalized_base_url,
                 config.litellm.api_key,
                 model_metadata.id,
-                model_metadata.litellm_fields
+                model_metadata.litellm_fields,
+                source_endpoint.normalized_base_url
             )
             logger.info("Successfully added model %s from %s to LiteLLM via API", model, source)
             return {"status": "success", "message": f"Model '{model}' added to LiteLLM", "result": result}

@@ -436,6 +436,7 @@ class ModelMetadata(BaseModel):
     """Normalized model description."""
 
     id: str
+    database_id: str | None = Field(None, description="Database UUID for LiteLLM models (used for deletion)")
     model_type: str | None = Field(None, description="Model type such as embeddings or completion")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     max_tokens: int | None = Field(None, description="Combined token limit when provided")
@@ -453,7 +454,7 @@ class ModelMetadata(BaseModel):
     raw: dict = Field(default_factory=dict, description="Raw metadata returned from the source")
 
     @classmethod
-    def from_raw(cls, model_id: str, raw: dict) -> "ModelMetadata":
+    def from_raw(cls, model_id: str, raw: dict, database_id: str | None = None) -> "ModelMetadata":
         """Construct a metadata object with normalized context and capability details."""
 
         max_tokens = _extract_numeric(raw, "max_tokens")
@@ -471,6 +472,7 @@ class ModelMetadata(BaseModel):
 
         return cls(
             id=model_id,
+            database_id=database_id,
             model_type=model_type,
             max_tokens=max_tokens,
             max_input_tokens=max_input_tokens,
