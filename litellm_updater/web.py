@@ -6,11 +6,12 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 
-from fastapi import FastAPI, Form, HTTPException, Request, status
+from fastapi import FastAPI, Form, HTTPException, Request, status, Depends
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import httpx
 from pydantic import BaseModel
@@ -22,6 +23,8 @@ from .config import (
     set_sync_interval,
     update_litellm_target,
 )
+from .database import create_engine, get_session, init_session_maker
+from .db_models import Base
 from .models import (
     AppConfig,
     LitellmDestination,
@@ -131,19 +134,36 @@ class CacheUpdateRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database
+    logger.info("Initializing database...")
+    engine = create_engine()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    init_session_maker(engine)
+    logger.info("Database initialized successfully")
+
+    # Start scheduler
     task = asyncio.create_task(start_scheduler(load_config, sync_state.update))
+
     try:
         yield
     finally:
-        logger.info("Shutting down scheduler gracefully...")
+        logger.info("Shutting down...")
+
+        # Cancel scheduler
         task.cancel()
         try:
-            # Wait up to 10 seconds for graceful shutdown
             await asyncio.wait_for(task, timeout=10.0)
         except (asyncio.CancelledError, asyncio.TimeoutError):
             logger.info("Scheduler shutdown complete")
         except Exception:
             logger.exception("Unexpected error during scheduler shutdown")
+
+        # Dispose database engine
+        await engine.dispose()
+        logger.info("Shutdown complete")
 
 
 async def _delete_model_from_litellm(

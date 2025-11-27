@@ -30,12 +30,35 @@ class SourceEndpoint(BaseModel):
         None,
         description="Optional API key or bearer token used to authenticate against the source",
     )
+    prefix: str | None = Field(
+        None,
+        description="Optional prefix for model names (e.g., 'mks-ollama'). Applied to display names and model_name in LiteLLM",
+    )
+    default_ollama_mode: str | None = Field(
+        None,
+        description="Default Ollama mode: 'ollama' or 'openai'. Only valid for Ollama sources",
+    )
+
+    @model_validator(mode="after")
+    def validate_ollama_mode(self) -> "SourceEndpoint":
+        """Validate ollama_mode only for Ollama sources."""
+        if self.default_ollama_mode is not None:
+            if self.type != SourceType.OLLAMA:
+                raise ValueError("default_ollama_mode is only valid for Ollama sources")
+            if self.default_ollama_mode not in ("ollama", "openai"):
+                raise ValueError("default_ollama_mode must be 'ollama' or 'openai'")
+        return self
 
     @property
     def normalized_base_url(self) -> str:
         """Return the base URL without a trailing slash for safe path joining."""
-
         return str(self.base_url).rstrip("/")
+
+    def apply_prefix(self, model_name: str) -> str:
+        """Apply prefix to model name if configured."""
+        if self.prefix:
+            return f"{self.prefix}/{model_name}"
+        return model_name
 
 
 class LitellmDestination(BaseModel):
