@@ -295,7 +295,7 @@ def create_app() -> FastAPI:
     async def sources(request: Request):
         """Database-driven providers and models page."""
         return templates.TemplateResponse(
-            "sources_db.html",
+            "sources.html",
             {
                 "request": request,
             },
