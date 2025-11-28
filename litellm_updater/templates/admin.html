@@ -1,5 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
+
+<section class="panel">
+  <h2>Database Migration</h2>
+  <p class="muted">
+    Providers are now managed in the database. If you have sources in config.json, migrate them to the database.
+  </p>
+  <button id="migrate-btn" onclick="migrateToDatabase()">Migrate from config.json</button>
+  <div id="migration-result" style="margin-top: 10px;"></div>
+</section>
+
 <section class="panel">
   <h2>LiteLLM Destination</h2>
   <form action="/admin/litellm" method="post">
@@ -20,35 +30,154 @@
 </section>
 
 <section class="panel">
-  <h2>Sources</h2>
-  <div class="sources">
-    <ul>
-      {% for source in config.sources %}
-      <li>
-        <div>
-          <strong>{{ source.name }}</strong> — {{ human_source_type(source.type) }} ({{ source.base_url }})
-        </div>
-        <form action="/admin/sources/delete" method="post">
-          <input type="hidden" name="name" value="{{ source.name }}" />
-          <button type="submit">Delete</button>
-        </form>
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
-  <h3>Add source</h3>
-  <form action="/admin/sources" method="post">
+  <h2>Providers</h2>
+  <div id="providers-list">Loading providers...</div>
+
+  <h3>Add Provider</h3>
+  <form id="add-provider-form" onsubmit="addProvider(event)">
     <label>Name <input type="text" name="name" required /></label>
-    <label>Base URL <input type="text" name="base_url" required /></label>
+    <label>Base URL <input type="text" name="base_url" required placeholder="http://localhost:11434" /></label>
     <label>
       Type
-      <select name="source_type" required>
+      <select name="type" id="provider-type" required onchange="toggleOllamaFields()">
         <option value="ollama">Ollama</option>
         <option value="litellm">LiteLLM / OpenAI</option>
       </select>
     </label>
     <label>API Key <input type="text" name="api_key" /></label>
-    <button type="submit">Add source</button>
+    <label>Prefix <input type="text" name="prefix" placeholder="e.g., mks-ollama" /></label>
+    <div id="ollama-fields">
+      <label>
+        Default Ollama Mode
+        <select name="default_ollama_mode">
+          <option value="">None</option>
+          <option value="ollama">Ollama</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </label>
+    </div>
+    <button type="submit">Add Provider</button>
   </form>
 </section>
+
+<script>
+async function loadProviders() {
+  try {
+    const response = await fetch('/api/providers');
+    const providers = await response.json();
+
+    const container = document.getElementById('providers-list');
+    if (providers.length === 0) {
+      container.innerHTML = '<p class="muted">No providers configured. Add one below or migrate from config.json.</p>';
+      return;
+    }
+
+    container.innerHTML = '<ul>' + providers.map(p => `
+      <li>
+        <div>
+          <strong>${p.name}</strong> — ${p.type} (${p.base_url})
+          ${p.prefix ? `<br><span class="muted">Prefix: ${p.prefix}</span>` : ''}
+          ${p.default_ollama_mode ? `<br><span class="muted">Ollama Mode: ${p.default_ollama_mode}</span>` : ''}
+        </div>
+        <button onclick="deleteProvider(${p.id}, '${p.name}')">Delete</button>
+      </li>
+    `).join('') + '</ul>';
+  } catch (error) {
+    document.getElementById('providers-list').innerHTML =
+      '<p style="color: red;">Error loading providers: ' + error.message + '</p>';
+  }
+}
+
+async function addProvider(event) {
+  event.preventDefault();
+  const form = event.target;
+  const formData = new FormData(form);
+
+  try {
+    const response = await fetch('/admin/providers', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (response.redirected) {
+      window.location.href = response.url;
+    } else if (response.ok) {
+      form.reset();
+      await loadProviders();
+      alert('Provider added successfully');
+    } else {
+      const error = await response.json();
+      alert('Error: ' + (error.detail || 'Failed to add provider'));
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
+async function deleteProvider(id, name) {
+  if (!confirm(`Delete provider "${name}"? This will also delete all associated models.`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/admin/providers/${id}`, {
+      method: 'DELETE'
+    });
+
+    if (response.ok) {
+      await loadProviders();
+      alert('Provider deleted successfully');
+    } else {
+      const error = await response.json();
+      alert('Error: ' + (error.detail || 'Failed to delete provider'));
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
+async function migrateToDatabase() {
+  const btn = document.getElementById('migrate-btn');
+  const result = document.getElementById('migration-result');
+
+  btn.disabled = true;
+  btn.textContent = 'Migrating...';
+  result.innerHTML = '';
+
+  try {
+    const response = await fetch('/admin/migrate-to-db', {
+      method: 'POST'
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      result.innerHTML = `<p style="color: green;">✓ ${data.message}</p>`;
+      if (data.migrated > 0) {
+        await loadProviders();
+      }
+    } else {
+      result.innerHTML = `<p style="color: red;">✗ ${data.detail || 'Migration failed'}</p>`;
+    }
+  } catch (error) {
+    result.innerHTML = `<p style="color: red;">✗ Error: ${error.message}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Migrate from config.json';
+  }
+}
+
+function toggleOllamaFields() {
+  const type = document.getElementById('provider-type').value;
+  const ollamaFields = document.getElementById('ollama-fields');
+  ollamaFields.style.display = type === 'ollama' ? 'block' : 'none';
+}
+
+// Load providers on page load
+document.addEventListener('DOMContentLoaded', () => {
+  loadProviders();
+  toggleOllamaFields();
+});
+</script>
+
 {% endblock %}

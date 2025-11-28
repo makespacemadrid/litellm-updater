@@ -1,794 +1,326 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <h2>Sources</h2>
-  {% if config.sources %}
-  {% for source in config.sources %}
-  <div class="source-block">
-    <div class="source-header">
-      <div>
-        <h3>{{ source.name }}</h3>
-        <p class="muted">{{ human_source_type(source.type) }} — {{ source.base_url }}</p>
-      </div>
-      <div class="source-actions">
-        <form action="/sources/refresh" method="post" class="refresh-form">
-          <input type="hidden" name="name" value="{{ source.name }}" />
-          <button type="submit">Refresh list</button>
-        </form>
-      </div>
-    </div>
-    {% set source_models = models.get(source.name) %}
-    <div class="models-area" data-source-name="{{ source.name }}" data-last-synced="{{ last_synced }}">
-      <div class="models-content">
-        {% if source_models %}
-        <p class="muted">Last fetched at {{ source_models.fetched_at or last_synced }}</p>
-        <ul class="model-cards">
-          {% for model in source_models.models %}
-          {% set litellm_fields = model.litellm_fields %}
-          <li class="model-card">
-            <!-- Model Header -->
-            <div class="model-card__header">
-              <div class="model-card__title">{{ model.id }}</div>
-              {% if model.raw.get('details') %}
-              {% set details = model.raw.details %}
-              <div class="model-card__subtitle">
-                {% if details.get('family') %}{{ details.family }}{% endif %}
-                {% if details.get('parameter_size') %}
-                  {% if details.get('family') %} • {% endif %}{{ details.parameter_size }}
-                {% endif %}
-                {% if details.get('quantization_level') %}
-                  {% if details.get('family') or details.get('parameter_size') %} • {% endif %}{{ details.quantization_level }}
-                {% endif %}
-              </div>
-              {% endif %}
-            </div>
+  <h2>Providers & Models (Database)</h2>
+  <p class="muted">Models are loaded from the database. Orphaned models (no longer in provider) are shown in <span style="color: #d32f2f;">red</span>.</p>
 
-            <!-- Model Info -->
-            <div class="model-card__info">
-              <!-- Context Window -->
-              {% set context_value = litellm_fields.get('max_input_tokens') or model.max_input_tokens or model.context_window %}
-              {% if context_value %}
-              <span class="badge">
-                Context: {{ "{:,}".format(context_value) }}
-              </span>
-              {% endif %}
-
-              <!-- Capabilities (only actual capabilities, not model types) -->
-              {% if model.capabilities and model.capabilities|length > 0 %}
-              {% for capability in model.capabilities[:3] %}
-              <span class="badge badge-support">{{ capability }}</span>
-              {% endfor %}
-              {% if model.capabilities|length > 3 %}
-              <span class="badge">+{{ model.capabilities|length - 3 }} más</span>
-              {% endif %}
-              {% elif model.model_type %}
-              <span class="badge">{{ model.model_type }}</span>
-              {% else %}
-              <span class="badge muted">Chat model</span>
-              {% endif %}
-            </div>
-
-            <!-- Actions -->
-            <div class="model-card__actions">
-              <button type="button" class="btn-info model-more-info" data-source-name="{{ source.name }}" data-model-id="{{ model.id }}">
-                Info
-              </button>
-              <button type="button" class="btn-edit model-edit" data-source-name="{{ source.name }}" data-model-id="{{ model.id }}">
-                Edit
-              </button>
-              <button type="button" class="btn-add model-add" data-source-name="{{ source.name }}" data-model-id="{{ model.id }}">
-                Add
-              </button>
-            </div>
-
-            <!-- Details (hidden by default) -->
-            <details class="model-card__details" style="grid-column: 1 / -1; margin-top: 0.5rem;">
-              <summary style="display: none;"></summary>
-              <div class="model-card__details-content">
-                <div class="litellm-fields-preview">Cargando información completa...</div>
-                <details class="raw-data-toggle">
-                  <summary>Ver datos completos (JSON)</summary>
-                  <pre class="raw-data-json"></pre>
-                </details>
-              </div>
-            </details>
-          </li>
-          {% endfor %}
-        </ul>
-        {% else %}
-        <p class="muted">No models fetched yet for this source.</p>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  {% endfor %}
-  {% else %}
-  <p>No sources configured yet. Add sources in the admin page.</p>
-  {% endif %}
+  <div id="providers-container">Loading providers...</div>
 </section>
+
 <section class="panel">
   <form action="/sync" method="post">
     <button type="submit">Run sync now</button>
   </form>
 </section>
-<dialog id="edit-dialog" class="edit-dialog">
-  <form method="dialog" class="edit-dialog__form">
-    <div class="edit-dialog__header">
-      <h3 id="edit-dialog-title">Editar modelo</h3>
-      <button type="button" id="edit-dialog-close" class="edit-dialog__close" aria-label="Cerrar">×</button>
-    </div>
-    <p class="muted">Ajusta los campos LiteLLM antes de enviarlos a tu proxy. Los cambios solo viven en la caché local.</p>
-    <p class="edit-dialog__error" id="edit-dialog-error" role="alert"></p>
-    <label for="edit-dialog-json">Campos LiteLLM (JSON)</label>
-    <textarea id="edit-dialog-json" rows="12" class="edit-dialog__textarea"></textarea>
-    <div class="edit-dialog__actions">
-      <button type="button" id="edit-dialog-cancel" class="btn-secondary">Cancelar</button>
-      <button type="button" id="edit-dialog-save">Guardar cambios</button>
-    </div>
-  </form>
-</dialog>
+
+<style>
+.provider-block {
+  margin-bottom: 2rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.provider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.provider-info h3 {
+  margin: 0 0 0.25rem 0;
+}
+
+.provider-info .muted {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.model-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.model-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  background: #f9f9f9;
+  border-radius: 4px;
+}
+
+.model-item.orphaned {
+  background: #ffebee;
+  border-left: 3px solid #d32f2f;
+}
+
+.model-item.orphaned .model-name {
+  color: #d32f2f;
+}
+
+.model-info {
+  flex: 1;
+}
+
+.model-name {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.model-meta {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.model-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.model-actions button {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+.btn-refresh {
+  background: #1976d2;
+  color: white;
+}
+
+.btn-push {
+  background: #388e3c;
+  color: white;
+}
+
+.btn-edit {
+  background: #f57c00;
+  color: white;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  margin: 0 0.25rem;
+  background: #e0e0e0;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.badge.modified {
+  background: #f57c00;
+  color: white;
+}
+</style>
+
 <script>
-  const modelsEndpoint = '/models';
-  const modelDetailsEndpoint = '/models/show';
-  const cacheUpdateEndpoint = '/models/cache';
+let providers = [];
 
-  function formatBytes(bytes) {
-    if (!Number.isFinite(bytes)) return null;
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex += 1;
-    }
-    return `${size.toFixed(size >= 10 || size % 1 === 0 ? 0 : 1)} ${units[unitIndex]}`;
+async function loadProviders() {
+  try {
+    const response = await fetch('/api/providers');
+    if (!response.ok) throw new Error('Failed to load providers');
+
+    providers = await response.json();
+    await renderProviders();
+  } catch (error) {
+    document.getElementById('providers-container').innerHTML =
+      `<p style="color: red;">Error loading providers: ${error.message}</p>`;
+  }
+}
+
+async function loadProviderModels(providerId) {
+  const response = await fetch(`/api/providers/${providerId}/models?include_orphaned=true`);
+  if (!response.ok) throw new Error('Failed to load models');
+  return await response.json();
+}
+
+async function renderProviders() {
+  const container = document.getElementById('providers-container');
+
+  if (providers.length === 0) {
+    container.innerHTML = '<p class="muted">No providers configured. Add providers in the admin page.</p>';
+    return;
   }
 
-  function buildTagSummary(raw = {}) {
-    const details = raw.details || {};
-    const modifiedAt = raw.modified_at ? new Date(raw.modified_at).toLocaleString() : null;
-    const sizeLabel = formatBytes(raw.size);
-    const families = Array.isArray(details.families) && details.families.length
-      ? `Familias: ${details.families.join(', ')}`
-      : null;
+  let html = '';
 
-    return [
-      details.parameter_size ? `Parámetros: ${details.parameter_size}` : null,
-      details.quantization ? `Cuantización: ${details.quantization}` : null,
-      sizeLabel ? `Tamaño: ${sizeLabel}` : null,
-      modifiedAt ? `Actualizado: ${modifiedAt}` : null,
-      families,
-      details.family ? `Familia principal: ${details.family}` : null,
-      raw.digest ? `Digest: ${raw.digest}` : null,
-    ].filter(Boolean);
+  for (const provider of providers) {
+    try {
+      const data = await loadProviderModels(provider.id);
+      const models = data.models || [];
+
+      html += `
+        <div class="provider-block">
+          <div class="provider-header">
+            <div class="provider-info">
+              <h3>${provider.name}</h3>
+              <p class="muted">
+                ${provider.type} — ${provider.base_url}
+                ${provider.prefix ? `<br>Prefix: <strong>${provider.prefix}</strong>` : ''}
+              </p>
+            </div>
+            <div>
+              <span class="muted">${models.length} model(s)</span>
+            </div>
+          </div>
+          ${models.length > 0 ? renderModels(provider, models) : '<p class="muted">No models synced yet</p>'}
+        </div>
+      `;
+    } catch (error) {
+      html += `
+        <div class="provider-block">
+          <div class="provider-header">
+            <div class="provider-info">
+              <h3>${provider.name}</h3>
+              <p class="muted">${provider.type} — ${provider.base_url}</p>
+            </div>
+          </div>
+          <p style="color: red;">Error loading models: ${error.message}</p>
+        </div>
+      `;
+    }
   }
 
-  // Clean JSON by removing null, empty strings, and empty objects/arrays
-  function cleanJSON(obj) {
-    if (obj === null || obj === undefined) return null;
-    if (typeof obj !== 'object') return obj;
+  container.innerHTML = html;
+  bindModelActions();
+}
 
-    if (Array.isArray(obj)) {
-      const cleaned = obj.map(cleanJSON).filter(item => item !== null);
-      return cleaned.length > 0 ? cleaned : null;
+function renderModels(provider, models) {
+  const items = models.map(model => {
+    const orphanedClass = model.is_orphaned ? 'orphaned' : '';
+    const displayName = model.display_name || model.model_id;
+
+    // Build metadata badges
+    const badges = [];
+    if (model.context_window) {
+      badges.push(`Context: ${model.context_window.toLocaleString()}`);
+    }
+    if (model.capabilities && model.capabilities.length > 0) {
+      badges.push(...model.capabilities.slice(0, 2));
     }
 
-    const cleaned = {};
-    for (const [key, value] of Object.entries(obj)) {
-      const cleanedValue = cleanJSON(value);
-      if (cleanedValue !== null && cleanedValue !== '' &&
-          !(Array.isArray(cleanedValue) && cleanedValue.length === 0) &&
-          !(typeof cleanedValue === 'object' && Object.keys(cleanedValue).length === 0)) {
-        cleaned[key] = cleanedValue;
-      }
-    }
+    const modifiedBadge = model.user_modified ? '<span class="badge modified">Modified</span>' : '';
 
-    return Object.keys(cleaned).length > 0 ? cleaned : null;
-  }
-
-  function buildOllamaInfoHTML(rawModel = {}) {
-    if (!rawModel || Object.keys(rawModel).length === 0) {
-      return '';
-    }
-
-    const sections = [];
-
-    // Basic model information
-    const basicInfo = [];
-    if (rawModel.name) {
-      basicInfo.push(`<div class="info-item"><span class="info-label">Nombre:</span> <span class="info-value">${rawModel.name}</span></div>`);
-    }
-    if (rawModel.modified_at) {
-      const modifiedDate = new Date(rawModel.modified_at).toLocaleString();
-      basicInfo.push(`<div class="info-item"><span class="info-label">Modificado:</span> <span class="info-value">${modifiedDate}</span></div>`);
-    }
-    if (rawModel.size) {
-      const sizeLabel = formatBytes(rawModel.size);
-      basicInfo.push(`<div class="info-item"><span class="info-label">Tamaño:</span> <span class="info-value">${sizeLabel}</span></div>`);
-    }
-    if (rawModel.digest) {
-      basicInfo.push(`<div class="info-item"><span class="info-label">Digest:</span> <span class="info-value code">${rawModel.digest}</span></div>`);
-    }
-
-    if (basicInfo.length > 0) {
-      sections.push(`
-        <div class="metadata-section metadata-section--ollama">
-          <div class="metadata-section__title">Información del Modelo (Ollama)</div>
-          <div class="info-grid">
-            ${basicInfo.join('')}
+    return `
+      <li class="model-item ${orphanedClass}" data-model-id="${model.id}">
+        <div class="model-info">
+          <div class="model-name">${displayName}</div>
+          <div class="model-meta">
+            ${badges.map(b => `<span class="badge">${b}</span>`).join('')}
+            ${modifiedBadge}
+            ${model.is_orphaned ? '<span class="badge" style="background: #d32f2f; color: white;">Orphaned</span>' : ''}
           </div>
         </div>
-      `);
-    }
-
-    // Model details (family, parameters, quantization)
-    const details = rawModel.details || {};
-    const detailsInfo = [];
-    if (details.family) {
-      detailsInfo.push(`<div class="info-item"><span class="info-label">Familia:</span> <span class="info-value">${details.family}</span></div>`);
-    }
-    if (Array.isArray(details.families) && details.families.length > 0) {
-      detailsInfo.push(`<div class="info-item"><span class="info-label">Familias:</span> <span class="info-value">${details.families.join(', ')}</span></div>`);
-    }
-    if (details.parameter_size) {
-      detailsInfo.push(`<div class="info-item"><span class="info-label">Parámetros:</span> <span class="info-value">${details.parameter_size}</span></div>`);
-    }
-    if (details.quantization_level) {
-      detailsInfo.push(`<div class="info-item"><span class="info-label">Cuantización:</span> <span class="info-value">${details.quantization_level}</span></div>`);
-    }
-    if (details.format) {
-      detailsInfo.push(`<div class="info-item"><span class="info-label">Formato:</span> <span class="info-value">${details.format}</span></div>`);
-    }
-
-    if (detailsInfo.length > 0) {
-      sections.push(`
-        <div class="metadata-section metadata-section--ollama-details">
-          <div class="metadata-section__title">Detalles Técnicos</div>
-          <div class="info-grid">
-            ${detailsInfo.join('')}
-          </div>
+        <div class="model-actions">
+          ${!model.is_orphaned ? `<button class="btn-refresh" onclick="refreshModel(${model.id}, '${displayName}')">Refresh</button>` : ''}
+          <button class="btn-push" onclick="pushModel(${model.id}, '${displayName}')">Push to LiteLLM</button>
+          <button class="btn-edit" onclick="editModel(${model.id})">Edit Params</button>
         </div>
-      `);
-    }
-
-    // Model parameters
-    if (rawModel.parameters) {
-      sections.push(`
-        <div class="metadata-section metadata-section--ollama-params">
-          <div class="metadata-section__title">Parámetros</div>
-          <pre class="params-code">${rawModel.parameters}</pre>
-        </div>
-      `);
-    }
-
-    return sections.join('');
-  }
-
-  function buildLitellmFieldsHTML(litellmModel = {}, rawModel = {}) {
-    if (!litellmModel || Object.keys(litellmModel).length === 0) {
-      return '<p class="muted">No se encontraron campos compatibles con LiteLLM.</p>';
-    }
-
-    const sections = [];
-
-    // Parameter Mapping Section (Ollama → OpenAI)
-    if (Array.isArray(litellmModel.supported_openai_params) && litellmModel.supported_openai_params.length > 0) {
-      const paramMappings = [];
-      const ollamaParams = rawModel.parameters || '';
-
-      // Show mapped parameters
-      const mappings = {
-        'repeat_penalty': 'frequency_penalty',
-        'temperature': 'temperature',
-        'top_k': 'top_k',
-        'top_p': 'top_p',
-        'stop': 'stop'
-      };
-
-      for (const [ollama, openai] of Object.entries(mappings)) {
-        if (ollamaParams.includes(ollama) && litellmModel.supported_openai_params.includes(openai)) {
-          paramMappings.push(`
-            <div class="param-mapping-item">
-              <span class="param-mapping-item__source">${ollama}</span>
-              <span class="param-mapping-item__arrow">→</span>
-              <span class="param-mapping-item__target">${openai}</span>
-            </div>
-          `);
-        }
-      }
-
-      if (paramMappings.length > 0) {
-        sections.push(`
-          <div class="metadata-section metadata-section--mapping">
-            <div class="metadata-section__title">Mapeo Ollama → OpenAI</div>
-            <div class="param-mapping">
-              ${paramMappings.join('')}
-            </div>
-            <div class="param-mapping-note">
-              Parámetros extraídos desde Ollama y mapeados a formato OpenAI compatible
-            </div>
-          </div>
-        `);
-      }
-
-      // Show all supported OpenAI parameters
-      const params = litellmModel.supported_openai_params.map(p => `<span class="badge badge-param">${p}</span>`).join(' ');
-      sections.push(`
-        <div class="metadata-section">
-          <div class="metadata-section__title">Todos los parámetros soportados</div>
-          ${params}
-        </div>
-      `);
-    }
-
-    // Token Limits Section
-    const tokenLimits = [];
-    if (litellmModel.max_input_tokens) {
-      tokenLimits.push(`
-        <div class="token-limit-item">
-          <span class="token-limit-item__label">Entrada (Context):</span>
-          <span class="token-limit-item__value">${litellmModel.max_input_tokens.toLocaleString()}</span>
-        </div>
-      `);
-    }
-    if (litellmModel.max_output_tokens) {
-      tokenLimits.push(`
-        <div class="token-limit-item">
-          <span class="token-limit-item__label">Salida:</span>
-          <span class="token-limit-item__value">${litellmModel.max_output_tokens.toLocaleString()}</span>
-        </div>
-      `);
-    }
-    if (litellmModel.max_tokens) {
-      tokenLimits.push(`
-        <div class="token-limit-item">
-          <span class="token-limit-item__label">Total:</span>
-          <span class="token-limit-item__value">${litellmModel.max_tokens.toLocaleString()}</span>
-        </div>
-      `);
-    }
-    if (tokenLimits.length > 0) {
-      sections.push(`
-        <div class="metadata-section metadata-section--tokens">
-          <div class="metadata-section__title">Límites de Tokens</div>
-          <div class="token-limits">
-            ${tokenLimits.join('')}
-          </div>
-        </div>
-      `);
-    }
-
-    // Capabilities/Supports Section
-    const supports = [];
-    const supportFields = Object.keys(litellmModel).filter(k => k.startsWith('supports_'));
-    supportFields.forEach(field => {
-      if (litellmModel[field] === true) {
-        const label = field.replace('supports_', '').replace(/_/g, ' ');
-        supports.push(`<div class="capability-item">${label}</div>`);
-      }
-    });
-    if (supports.length > 0) {
-      sections.push(`
-        <div class="metadata-section metadata-section--capabilities">
-          <div class="metadata-section__title">Capacidades Soportadas</div>
-          <div class="capabilities-grid">
-            ${supports.join('')}
-          </div>
-        </div>
-      `);
-    }
-
-    // Pricing Section
-    const pricingItems = [];
-    if (litellmModel.input_cost_per_token) {
-      pricingItems.push(`
-        <div class="pricing-item">
-          <span class="pricing-item__label">Entrada:</span>
-          <span class="pricing-item__value">$${(litellmModel.input_cost_per_token * 1000).toFixed(4)}/1K tokens</span>
-        </div>
-      `);
-    }
-    if (litellmModel.output_cost_per_token) {
-      pricingItems.push(`
-        <div class="pricing-item">
-          <span class="pricing-item__label">Salida:</span>
-          <span class="pricing-item__value">$${(litellmModel.output_cost_per_token * 1000).toFixed(4)}/1K tokens</span>
-        </div>
-      `);
-    }
-    if (litellmModel.input_cost_per_second) {
-      pricingItems.push(`
-        <div class="pricing-item">
-          <span class="pricing-item__label">Audio Entrada:</span>
-          <span class="pricing-item__value">$${(litellmModel.input_cost_per_second * 60).toFixed(4)}/min</span>
-        </div>
-      `);
-    }
-    if (litellmModel.output_cost_per_second) {
-      pricingItems.push(`
-        <div class="pricing-item">
-          <span class="pricing-item__label">Audio Salida:</span>
-          <span class="pricing-item__value">$${(litellmModel.output_cost_per_second * 60).toFixed(4)}/min</span>
-        </div>
-      `);
-    }
-    if (litellmModel.output_cost_per_image) {
-      pricingItems.push(`
-        <div class="pricing-item">
-          <span class="pricing-item__label">Imagen:</span>
-          <span class="pricing-item__value">$${litellmModel.output_cost_per_image.toFixed(2)}/imagen</span>
-        </div>
-      `);
-    }
-    if (pricingItems.length > 0) {
-      sections.push(`
-        <div class="metadata-section metadata-section--pricing">
-          <div class="metadata-section__title">Precios (ref. OpenAI)</div>
-          <div class="pricing-grid">
-            ${pricingItems.join('')}
-          </div>
-        </div>
-      `);
-    }
-
-    return sections.join('');
-  }
-
-  function renderModels(container, sourceModels) {
-    const content = container.querySelector('.models-content');
-    const lastSynced = container.dataset.lastSynced;
-
-    if (!sourceModels || !Array.isArray(sourceModels.models) || sourceModels.models.length === 0) {
-      content.innerHTML = '<p class="muted">No models fetched yet for this source.</p>';
-      return;
-    }
-
-    const fetchedAt = sourceModels.fetched_at || lastSynced || '';
-    const items = sourceModels.models
-      .map((model) => {
-        // Build subtitle with model details
-        const details = model.raw?.details || {};
-        const subtitleParts = [];
-        if (details.family) subtitleParts.push(details.family);
-        if (details.parameter_size) subtitleParts.push(details.parameter_size);
-        if (details.quantization_level) subtitleParts.push(details.quantization_level);
-        const subtitle = subtitleParts.length > 0 ? `<div class="model-card__subtitle">${subtitleParts.join(' • ')}</div>` : '';
-
-        // Context window badge
-        const contextValue = model.max_input_tokens || model.context_window;
-        const contextBadge = contextValue
-          ? `<span class="badge">Context: ${contextValue.toLocaleString()}</span>`
-          : '';
-
-        // Capabilities badges (show first 3, only actual capabilities)
-        const capabilitiesBadges = [];
-        if (Array.isArray(model.capabilities) && model.capabilities.length > 0) {
-          const capsToShow = model.capabilities.slice(0, 3);
-          capsToShow.forEach(cap => {
-            capabilitiesBadges.push(`<span class="badge badge-support">${cap}</span>`);
-          });
-          if (model.capabilities.length > 3) {
-            capabilitiesBadges.push(`<span class="badge">+${model.capabilities.length - 3} más</span>`);
-          }
-        } else if (model.model_type) {
-          capabilitiesBadges.push(`<span class="badge">${model.model_type}</span>`);
-        } else {
-          capabilitiesBadges.push(`<span class="badge muted">Chat model</span>`);
-        }
-
-        return `
-          <li class="model-card">
-            <div class="model-card__header">
-              <div class="model-card__title">${model.id}</div>
-              ${subtitle}
-            </div>
-            <div class="model-card__info">
-              ${contextBadge}
-              ${capabilitiesBadges.join('')}
-            </div>
-            <div class="model-card__actions">
-              <button type="button" class="btn-info model-more-info" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
-                Info
-              </button>
-              <button type="button" class="btn-edit model-edit" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
-                Edit
-              </button>
-              <button type="button" class="btn-add model-add" data-source-name="${container.dataset.sourceName}" data-model-id="${model.id}">
-                Add
-              </button>
-            </div>
-            <details class="model-card__details" style="grid-column: 1 / -1; margin-top: 0.5rem;">
-              <summary style="display: none;"></summary>
-              <div class="model-card__details-content">
-                <div class="litellm-fields-preview">Cargando información completa...</div>
-                <details class="raw-data-toggle">
-                  <summary>Ver datos completos (JSON)</summary>
-                  <pre class="raw-data-json"></pre>
-                </details>
-              </div>
-            </details>
-          </li>
-        `;
-      })
-      .join('');
-
-    content.innerHTML = `
-      <p class="muted">Last fetched at ${fetchedAt}</p>
-      <ul class="model-cards">${items}</ul>
+      </li>
     `;
+  }).join('');
 
-    bindModelActions(container);
-  }
+  return `<ul class="model-list">${items}</ul>`;
+}
 
-  async function fetchModelDetails(sourceName, modelId) {
-    const params = new URLSearchParams({ source: sourceName, model: modelId });
-    const response = await fetch(`${modelDetailsEndpoint}?${params.toString()}`, {
-      headers: { Accept: 'application/json' },
+async function refreshModel(modelId, displayName) {
+  if (!confirm(`Refresh "${displayName}" from provider?`)) return;
+
+  try {
+    const response = await fetch(`/api/models/db/${modelId}/refresh`, {
+      method: 'POST'
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+    const result = await response.json();
 
-    return response.json();
-  }
-
-  async function loadModels() {
-    try {
-      const response = await fetch(modelsEndpoint, { headers: { Accept: 'application/json' } });
-      if (!response.ok) return;
-
-      const payload = await response.json();
-      document.querySelectorAll('.models-area').forEach((container) => {
-        const sourceName = container.dataset.sourceName;
-        renderModels(container, payload[sourceName]);
-      });
-    } catch (error) {
-      console.error('Failed loading models', error);
-    }
-  }
-
-  async function refreshSource(form) {
-    const formData = new FormData(form);
-    await fetch(form.action, { method: 'POST', body: formData });
-    await loadModels();
-  }
-
-  const editDialog = document.getElementById('edit-dialog');
-  const editDialogTitle = document.getElementById('edit-dialog-title');
-  const editDialogTextarea = document.getElementById('edit-dialog-json');
-  const editDialogError = document.getElementById('edit-dialog-error');
-
-  function openEditDialog(sourceName, modelId, litellmModel = {}) {
-    if (!editDialog || !editDialogTitle || !editDialogTextarea) return;
-
-    editDialog.dataset.sourceName = sourceName;
-    editDialog.dataset.modelId = modelId;
-    editDialogTitle.textContent = `Editar ${modelId}`;
-    editDialogError.textContent = '';
-    editDialogTextarea.value = JSON.stringify(litellmModel, null, 2);
-
-    if (typeof editDialog.showModal === 'function') {
-      editDialog.showModal();
+    if (response.ok) {
+      alert(`✓ ${result.message}`);
+      await loadProviders();
     } else {
-      editDialog.setAttribute('open', 'true');
+      alert(`✗ ${result.detail || 'Refresh failed'}`);
     }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
   }
+}
 
-  async function persistCacheOverride() {
-    if (!editDialog) return;
+async function pushModel(modelId, displayName) {
+  if (!confirm(`Push "${displayName}" to LiteLLM?`)) return;
 
-    editDialogError.textContent = '';
-    let parsed;
+  try {
+    const response = await fetch(`/api/models/db/${modelId}/push`, {
+      method: 'POST'
+    });
 
+    const result = await response.json();
+
+    if (response.ok) {
+      alert(`✓ ${result.message}`);
+    } else {
+      alert(`✗ ${result.detail || 'Push failed'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+async function editModel(modelId) {
+  try {
+    // Fetch current model data
+    const response = await fetch(`/api/models/db/${modelId}`);
+    if (!response.ok) throw new Error('Failed to load model');
+
+    const model = await response.json();
+    const currentParams = model.user_params || model.litellm_params;
+
+    // Show edit dialog
+    const newParamsJson = prompt(
+      `Edit parameters for ${model.display_name}\\n\\nCurrent params (JSON):`,
+      JSON.stringify(currentParams, null, 2)
+    );
+
+    if (!newParamsJson) return; // User cancelled
+
+    let newParams;
     try {
-      parsed = JSON.parse(editDialogTextarea.value || '{}');
+      newParams = JSON.parse(newParamsJson);
     } catch (error) {
-      editDialogError.textContent = `JSON inválido: ${error.message}`;
+      alert(`Invalid JSON: ${error.message}`);
       return;
     }
 
-    const payload = {
-      source: editDialog.dataset.sourceName,
-      model: editDialog.dataset.modelId,
-      litellm_model: parsed,
-    };
+    // Update parameters
+    const updateResponse = await fetch(`/api/models/db/${modelId}/params`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newParams)
+    });
 
-    try {
-      const response = await fetch(cacheUpdateEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+    const result = await updateResponse.json();
 
-      if (!response.ok) {
-        const errorPayload = await response.json().catch(() => ({}));
-        editDialogError.textContent = errorPayload.detail || 'No se pudo guardar los cambios.';
-        return;
-      }
-
-      editDialogError.textContent = '';
-      if (typeof editDialog.close === 'function') {
-        editDialog.close();
-      } else {
-        editDialog.removeAttribute('open');
-      }
-
-      alert('Cambios guardados en la caché local. Usa "Add" para enviarlos a LiteLLM.');
-    } catch (error) {
-      console.error('Failed updating cached model', error);
-      editDialogError.textContent = 'Error de red al guardar los cambios.';
+    if (updateResponse.ok) {
+      alert(`✓ ${result.message}`);
+      await loadProviders();
+    } else {
+      alert(`✗ ${result.detail || 'Update failed'}`);
     }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
   }
+}
 
-  function setupEditDialog() {
-    if (!editDialog) return;
+function bindModelActions() {
+  // Actions are bound via onclick in the HTML
+}
 
-    const closeDialog = () => {
-      editDialogError.textContent = '';
-      if (typeof editDialog.close === 'function') {
-        editDialog.close();
-      } else {
-        editDialog.removeAttribute('open');
-      }
-    };
-
-    document.getElementById('edit-dialog-cancel')?.addEventListener('click', closeDialog);
-    document.getElementById('edit-dialog-close')?.addEventListener('click', closeDialog);
-    document.getElementById('edit-dialog-save')?.addEventListener('click', persistCacheOverride);
-  }
-
-  function bindModelActions(container) {
-    // Info button (existing functionality)
-    container.querySelectorAll('.model-more-info').forEach((button) => {
-      button.addEventListener('click', async () => {
-        const sourceName = button.dataset.sourceName;
-        const modelId = button.dataset.modelId;
-        const card = button.closest('.model-card');
-        const details = card.querySelector('.model-card__details');
-        const fieldsPreview = details.querySelector('.litellm-fields-preview');
-        const rawDataJson = details.querySelector('.raw-data-json');
-
-        // Toggle details
-        const isOpen = details.open;
-        if (isOpen) {
-          details.open = false;
-          button.textContent = 'Ver más información';
-          return;
-        }
-
-        details.open = true;
-        button.textContent = 'Ocultar información';
-        fieldsPreview.innerHTML = '<p class="muted">Cargando información completa...</p>';
-
-        try {
-          const payload = await fetchModelDetails(sourceName, modelId);
-          const litellmModel = payload?.litellm_model || {};
-          const rawDetails = payload?.raw || payload || {};
-
-          // Build the Ollama info HTML (without model_info)
-          const ollamaInfoHTML = buildOllamaInfoHTML(rawDetails);
-
-          // Build the LiteLLM fields HTML
-          const fieldsHTML = buildLitellmFieldsHTML(litellmModel, rawDetails);
-          fieldsPreview.innerHTML = `
-            ${ollamaInfoHTML ? `
-              <div class="ollama-info-section">
-                <h4>Información del Modelo (Ollama):</h4>
-                ${ollamaInfoHTML}
-              </div>
-              <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e0e0e0;">
-            ` : ''}
-            <div class="litellm-import-preview">
-              <h4>Campos que se importarán a LiteLLM:</h4>
-              ${fieldsHTML}
-            </div>
-          `;
-
-          // Clean and display JSON data
-          const cleanedLitellmModel = cleanJSON(litellmModel);
-          const cleanedRawDetails = cleanJSON(rawDetails);
-
-          rawDataJson.textContent = [
-            '// Modelo ya formateado para LiteLLM (campos que se importarán):',
-            JSON.stringify(cleanedLitellmModel, null, 2),
-            '',
-            '// Respuesta completa del source:',
-            JSON.stringify(cleanedRawDetails, null, 2),
-          ].join('\n');
-        } catch (error) {
-          console.error('Failed loading model details', error);
-          fieldsPreview.innerHTML = '<p class="error">No se pudo cargar la información extendida.</p>';
-        }
-      });
-    });
-
-    // Edit button
-    container.querySelectorAll('.model-edit').forEach((button) => {
-      button.addEventListener('click', async () => {
-        const sourceName = button.dataset.sourceName;
-        const modelId = button.dataset.modelId;
-
-        try {
-          const payload = await fetchModelDetails(sourceName, modelId);
-          const litellmModel = payload?.litellm_model || {};
-          openEditDialog(sourceName, modelId, litellmModel);
-        } catch (error) {
-          console.error('Failed loading model details for editing', error);
-          alert('No se pudo cargar la información del modelo para editar.');
-        }
-      });
-    });
-
-    // Add button
-    container.querySelectorAll('.model-add').forEach((button) => {
-      button.addEventListener('click', async () => {
-        const sourceName = button.dataset.sourceName;
-        const modelId = button.dataset.modelId;
-
-        if (!confirm(`¿Añadir ${modelId} a LiteLLM?`)) {
-          return;
-        }
-
-        try {
-          button.disabled = true;
-          button.textContent = 'Añadiendo...';
-
-          const formData = new FormData();
-          formData.append('source', sourceName);
-          formData.append('model', modelId);
-
-          const response = await fetch('/models/add', {
-            method: 'POST',
-            body: formData
-          });
-
-          if (response.ok) {
-            alert(`Modelo ${modelId} añadido exitosamente a LiteLLM`);
-          } else {
-            const error = await response.json();
-            alert(`Error al añadir modelo: ${error.detail || response.statusText}`);
-          }
-        } catch (error) {
-          console.error('Failed to add model:', error);
-          alert(`Error de red al añadir modelo: ${error.message}`);
-        } finally {
-          button.disabled = false;
-          button.textContent = 'Add';
-        }
-      });
-    });
-  }
-
-  // Bind event listeners to initially server-rendered model cards
-  function bindInitialModelActions() {
-    document.querySelectorAll('.models-area').forEach((container) => {
-      bindModelActions(container);
-    });
-  }
-
-  // Bind refresh form event listeners
-  function bindRefreshForms() {
-    document.querySelectorAll('.refresh-form').forEach((form) => {
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        await refreshSource(form);
-      });
-    });
-  }
-
-  // Initialize on page load
-  document.addEventListener('DOMContentLoaded', () => {
-    bindInitialModelActions();
-    bindRefreshForms();
-    loadModels();
-    setupEditDialog();
-  });
-
-  // Also bind immediately in case DOMContentLoaded already fired
-  bindInitialModelActions();
-  bindRefreshForms();
-  loadModels();
-  setupEditDialog();
+// Load on page load
+document.addEventListener('DOMContentLoaded', loadProviders);
 </script>
+
 {% endblock %}

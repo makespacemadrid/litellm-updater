@@ -293,17 +293,11 @@ def create_app() -> FastAPI:
 
     @app.get("/sources", response_class=HTMLResponse)
     async def sources(request: Request):
-        config = load_config()
-        models = await sync_state.get_models()
-        last_synced = await sync_state.get_last_synced()
+        """Database-driven providers and models page."""
         return templates.TemplateResponse(
-            "sources.html",
+            "sources_db.html",
             {
                 "request": request,
-                "config": config,
-                "models": models,
-                "last_synced": last_synced,
-                "human_source_type": _human_source_type,
             },
         )
 
