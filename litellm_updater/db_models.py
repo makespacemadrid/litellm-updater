@@ -26,6 +26,7 @@ class Provider(Base):
     prefix: Mapped[str | None] = mapped_column(String, nullable=True)
     default_ollama_mode: Mapped[str | None] = mapped_column(String, nullable=True)
     tags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_groups: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
     sync_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
@@ -60,6 +61,18 @@ class Provider(Base):
     def tags_list(self, value: list[str]) -> None:
         """Store provider tags as JSON."""
         self.tags = json.dumps(value) if value else None
+
+    @property
+    def access_groups_list(self) -> list[str]:
+        """Parse provider access_groups JSON to list."""
+        if not self.access_groups:
+            return []
+        return json.loads(self.access_groups)
+
+    @access_groups_list.setter
+    def access_groups_list(self, value: list[str]) -> None:
+        """Store provider access_groups as JSON."""
+        self.access_groups = json.dumps(value) if value else None
 
 
 class Config(Base):
@@ -111,6 +124,7 @@ class Model(Base):
     user_params: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON object
     system_tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON array
     user_tags: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    access_groups: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
 
     # Ollama-specific
     ollama_mode: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -215,6 +229,18 @@ class Model(Base):
         self.user_tags = json.dumps(value) if value else None
 
     @property
+    def access_groups_list(self) -> list[str]:
+        """Parse model access_groups JSON to list."""
+        if not self.access_groups:
+            return []
+        return json.loads(self.access_groups)
+
+    @access_groups_list.setter
+    def access_groups_list(self, value: list[str] | None) -> None:
+        """Store model access_groups as JSON."""
+        self.access_groups = json.dumps(value) if value else None
+
+    @property
     def all_tags(self) -> list[str]:
         """Return merged system and user tags."""
         merged: list[str] = []
@@ -236,6 +262,14 @@ class Model(Base):
             base_params["tags"] = self.all_tags
 
         return base_params
+
+    def get_effective_access_groups(self) -> list[str]:
+        """Return effective access_groups (model overrides provider)."""
+        if self.access_groups_list:
+            return self.access_groups_list
+        if self.provider and self.provider.access_groups_list:
+            return self.provider.access_groups_list
+        return []
 
     def get_display_name(self, apply_prefix: bool = True) -> str:
         """Return model name with optional provider prefix."""

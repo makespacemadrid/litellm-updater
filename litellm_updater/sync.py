@@ -134,6 +134,11 @@ async def _reconcile_litellm_for_provider(
             model_info["mode"] = ollama_mode
             model_info["litellm_provider"] = "openai" if ollama_mode == "openai" else "ollama"
 
+        # Add access_groups if configured (model overrides provider)
+        effective_access_groups = model.get_effective_access_groups()
+        if effective_access_groups:
+            model_info["access_groups"] = effective_access_groups
+
         try:
             await _add_model_to_litellm(
                 client,

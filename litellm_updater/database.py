@@ -67,17 +67,19 @@ async def ensure_minimum_schema(engine: AsyncEngine) -> None:
         # First, create all tables if they don't exist
         await conn.run_sync(Base.metadata.create_all)
 
-        # Providers.tags / sync_enabled
+        # Providers.tags / access_groups / sync_enabled
         result = await conn.exec_driver_sql("PRAGMA table_info(providers)")
         provider_columns = {row[1] for row in result}
         if "tags" not in provider_columns:
             await conn.exec_driver_sql("ALTER TABLE providers ADD COLUMN tags TEXT")
+        if "access_groups" not in provider_columns:
+            await conn.exec_driver_sql("ALTER TABLE providers ADD COLUMN access_groups TEXT")
         if "sync_enabled" not in provider_columns:
             await conn.exec_driver_sql(
                 "ALTER TABLE providers ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 1"
             )
 
-        # Models.system_tags / user_tags / sync_enabled
+        # Models.system_tags / user_tags / access_groups / sync_enabled
         result = await conn.exec_driver_sql("PRAGMA table_info(models)")
         model_columns = {row[1] for row in result}
         if "system_tags" not in model_columns:
@@ -86,6 +88,8 @@ async def ensure_minimum_schema(engine: AsyncEngine) -> None:
             )
         if "user_tags" not in model_columns:
             await conn.exec_driver_sql("ALTER TABLE models ADD COLUMN user_tags TEXT")
+        if "access_groups" not in model_columns:
+            await conn.exec_driver_sql("ALTER TABLE models ADD COLUMN access_groups TEXT")
         if "sync_enabled" not in model_columns:
             await conn.exec_driver_sql(
                 "ALTER TABLE models ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 1"

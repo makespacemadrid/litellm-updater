@@ -82,6 +82,7 @@ async def create_provider(
     prefix: str | None = None,
     default_ollama_mode: str | None = None,
     tags: list[str] | None = None,
+    access_groups: list[str] | None = None,
     sync_enabled: bool = True,
 ) -> Provider:
     """Create a new provider."""
@@ -97,6 +98,7 @@ async def create_provider(
         sync_enabled=sync_enabled,
     )
     provider.tags_list = normalize_tags(tags)
+    provider.access_groups_list = normalize_tags(access_groups)
     session.add(provider)
     await session.flush()
     return provider
@@ -126,6 +128,7 @@ async def update_provider(
     prefix: str | None = None,
     default_ollama_mode: str | None = None,
     tags: list[str] | None = None,
+    access_groups: list[str] | None = None,
     sync_enabled: bool | None = None,
 ) -> Provider:
     """Update existing provider."""
@@ -145,6 +148,8 @@ async def update_provider(
         provider.default_ollama_mode = "ollama"
     if tags is not None:
         provider.tags_list = normalize_tags(tags)
+    if access_groups is not None:
+        provider.access_groups_list = normalize_tags(access_groups)
     if sync_enabled is not None:
         provider.sync_enabled = sync_enabled
 
@@ -352,18 +357,21 @@ async def update_model_params(
     model: Model,
     user_params: dict | None = None,
     user_tags: list[str] | None = None,
+    access_groups: list[str] | None = None,
     sync_enabled: bool | None = None,
 ) -> Model:
-    """Update model with user-edited parameters, tags, and sync settings."""
+    """Update model with user-edited parameters, tags, access_groups, and sync settings."""
     if user_params is not None:
         model.user_params = json.dumps(user_params)
     if user_tags is not None:
         model.user_tags_list = normalize_tags(user_tags)
+    if access_groups is not None:
+        model.access_groups_list = normalize_tags(access_groups)
     if sync_enabled is not None:
         model.sync_enabled = sync_enabled
 
-    if user_params is not None or user_tags is not None or sync_enabled is not None:
-        if user_params is not None or user_tags is not None:
+    if user_params is not None or user_tags is not None or access_groups is not None or sync_enabled is not None:
+        if user_params is not None or user_tags is not None or access_groups is not None:
             model.user_modified = True
         model.updated_at = datetime.now(UTC)
     return model
@@ -373,6 +381,7 @@ async def reset_model_params(session: AsyncSession, model: Model) -> Model:
     """Reset model to provider defaults (clear user edits)."""
     model.user_params = None
     model.user_tags = None
+    model.access_groups = None
     model.user_modified = False
     model.updated_at = datetime.now(UTC)
     return model

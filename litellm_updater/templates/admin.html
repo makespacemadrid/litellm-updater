@@ -38,6 +38,7 @@
     <label>API Key <input type="text" name="api_key" /></label>
     <label>Prefix <input type="text" name="prefix" placeholder="e.g., mks-ollama" /></label>
     <label>Tags <input type="text" name="tags" placeholder="Comma separated (e.g., team-a, prod)" /></label>
+    <label>Access Groups <input type="text" name="access_groups" placeholder="Comma separated (e.g., compat, tts)" /></label>
     <div id="ollama-fields">
       <label>
         Default Ollama Mode
@@ -76,6 +77,7 @@ async function loadProviders() {
           ${p.prefix ? `<br><span class="muted">Prefix: ${p.prefix}</span>` : ''}
           ${p.default_ollama_mode ? `<br><span class="muted">Ollama Mode: ${p.default_ollama_mode}</span>` : ''}
           ${p.tags && p.tags.length ? `<br><span class="muted">Tags: ${p.tags.join(', ')}</span>` : ''}
+          ${p.access_groups && p.access_groups.length ? `<br><span class="muted">Access Groups: ${p.access_groups.join(', ')}</span>` : ''}
         </div>
         <div style="margin-top: 6px;">
           <button onclick="openEditProvider(${p.id})" type="button">Edit</button>
@@ -167,6 +169,7 @@ async function openEditProvider(id) {
     document.getElementById('edit-prefix').value = provider.prefix || '';
     document.getElementById('edit-default-ollama-mode').value = provider.default_ollama_mode || '';
     document.getElementById('edit-tags').value = (provider.tags || []).join(', ');
+    document.getElementById('edit-access-groups').value = (provider.access_groups || []).join(', ');
     toggleEditOllamaFields();
 
     document.getElementById('edit-provider-modal').style.display = 'block';
@@ -233,6 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <label>API Key <input type="text" id="edit-api-key" name="api_key" /></label>
         <label>Prefix <input type="text" id="edit-prefix" name="prefix" placeholder="e.g., mks-ollama" /></label>
         <label>Tags <input type="text" id="edit-tags" name="tags" placeholder="Comma separated" /></label>
+        <label>Access Groups <input type="text" id="edit-access-groups" name="access_groups" placeholder="Comma separated (e.g., compat, tts)" /></label>
         <div id="edit-ollama-fields">
           <label>
             Default Ollama Mode

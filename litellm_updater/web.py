@@ -628,6 +628,7 @@ def create_app() -> FastAPI:
         prefix: str | None = Form(None),
         default_ollama_mode: str | None = Form(None),
         tags: str | None = Form(None),
+        access_groups: str | None = Form(None),
         sync_enabled: bool = Form(True),
     ):
         """Create a new provider in the database."""
@@ -662,6 +663,7 @@ def create_app() -> FastAPI:
 
         try:
             parsed_tags = parse_tags_input(tags)
+            parsed_access_groups = parse_tags_input(access_groups)
             await create_provider(
                 session,
                 name=name,
@@ -671,6 +673,7 @@ def create_app() -> FastAPI:
                 prefix=prefix or None,
                 default_ollama_mode=default_ollama_mode or None,
                 tags=parsed_tags,
+                access_groups=parsed_access_groups,
                 sync_enabled=sync_enabled,
             )
             logger.info("Created provider: %s (%s) at %s", name, type, base_url)
@@ -694,6 +697,7 @@ def create_app() -> FastAPI:
         prefix: str | None = Form(None),
         default_ollama_mode: str | None = Form(None),
         tags: str | None = Form(None),
+        access_groups: str | None = Form(None),
         sync_enabled: bool | None = Form(None),
     ):
         """Update an existing provider."""
@@ -725,6 +729,7 @@ def create_app() -> FastAPI:
 
         try:
             parsed_tags = parse_tags_input(tags)
+            parsed_access_groups = parse_tags_input(access_groups)
             await update_provider(
                 session,
                 provider,
@@ -735,6 +740,7 @@ def create_app() -> FastAPI:
                 prefix=prefix,
                 default_ollama_mode=default_ollama_mode,
                 tags=parsed_tags if tags is not None else None,
+                access_groups=parsed_access_groups if access_groups is not None else None,
                 sync_enabled=sync_enabled,
             )
             logger.info("Updated provider: %s", provider.name)
@@ -1072,6 +1078,7 @@ def create_app() -> FastAPI:
                 "prefix": p.prefix,
                 "default_ollama_mode": p.default_ollama_mode,
                 "tags": p.tags_list,
+                "access_groups": p.access_groups_list,
                 "sync_enabled": p.sync_enabled,
                 "created_at": p.created_at.isoformat(),
                 "updated_at": p.updated_at.isoformat(),
@@ -1119,6 +1126,7 @@ def create_app() -> FastAPI:
                     "system_tags": model.system_tags_list,
                     "user_tags": model.user_tags_list,
                     "tags": model.all_tags,
+                    "access_groups": model.access_groups_list,
                     "ollama_mode": model.ollama_mode,
                     "is_orphaned": model.is_orphaned,
                     "orphaned_at": model.orphaned_at.isoformat() if model.orphaned_at else None,
@@ -1135,6 +1143,7 @@ def create_app() -> FastAPI:
                 "name": provider.name,
                 "prefix": provider.prefix,
                 "tags": provider.tags_list,
+                "access_groups": provider.access_groups_list,
             },
             "models": result,
         }
@@ -1171,6 +1180,7 @@ def create_app() -> FastAPI:
             "system_tags": model.system_tags_list,
             "user_tags": model.user_tags_list,
             "tags": model.all_tags,
+            "access_groups": model.access_groups_list,
             "raw_metadata": model.raw_metadata_dict,
             "ollama_mode": model.ollama_mode,
             "is_orphaned": model.is_orphaned,
@@ -1186,6 +1196,7 @@ def create_app() -> FastAPI:
                 "base_url": provider.base_url,
                 "type": provider.type,
                 "tags": provider.tags_list,
+                "access_groups": provider.access_groups_list,
             },
         }
 
@@ -1208,6 +1219,7 @@ def create_app() -> FastAPI:
         is_dict_payload = isinstance(payload, dict)
         params = payload.get("params") if is_dict_payload and "params" in payload else payload
         tags = payload.get("tags") if is_dict_payload else None
+        access_groups = payload.get("access_groups") if is_dict_payload else None
         sync_enabled = payload.get("sync_enabled") if is_dict_payload else None
 
         if isinstance(tags, str):
@@ -1215,11 +1227,16 @@ def create_app() -> FastAPI:
         else:
             normalized_tags = normalize_tags(tags) if tags is not None else None
 
-        if is_dict_payload and "params" not in payload and set(payload.keys()) <= {"tags", "sync_enabled"}:
+        if isinstance(access_groups, str):
+            normalized_access_groups = parse_tags_input(access_groups)
+        else:
+            normalized_access_groups = normalize_tags(access_groups) if access_groups is not None else None
+
+        if is_dict_payload and "params" not in payload and set(payload.keys()) <= {"tags", "access_groups", "sync_enabled"}:
             params = None
 
         try:
-            await update_model_params(session, model, params, normalized_tags, sync_enabled)
+            await update_model_params(session, model, params, normalized_tags, normalized_access_groups, sync_enabled)
             await session.commit()
             logger.info("Updated parameters for model %s (ID: %d)", model.model_id, model_id)
 
@@ -1229,6 +1246,7 @@ def create_app() -> FastAPI:
                 "model_id": model_id,
                 "user_params": model.user_params_dict,
                 "user_tags": model.user_tags_list,
+                "access_groups": model.access_groups_list,
             }
         except Exception as exc:
             logger.exception("Failed to update model parameters")
@@ -1445,6 +1463,11 @@ def create_app() -> FastAPI:
             else:
                 model_info["litellm_provider"] = "ollama"
 
+        # Add access_groups if configured (model overrides provider)
+        effective_access_groups = model.get_effective_access_groups()
+        if effective_access_groups:
+            model_info["access_groups"] = effective_access_groups
+
         try:
             # Push to LiteLLM
             result = await _add_model_to_litellm(
@@ -1591,6 +1614,11 @@ def create_app() -> FastAPI:
                         model_info["litellm_provider"] = "openai"
                     else:
                         model_info["litellm_provider"] = "ollama"
+
+                # Add access_groups if configured (model overrides provider)
+                effective_access_groups = model.get_effective_access_groups()
+                if effective_access_groups:
+                    model_info["access_groups"] = effective_access_groups
 
                 try:
                     # Push to LiteLLM

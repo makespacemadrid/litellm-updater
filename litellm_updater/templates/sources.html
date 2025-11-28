@@ -46,6 +46,10 @@
         <input id="config-tags" type="text" placeholder="team-a, prod, gpu" />
         <p class="muted" style="margin-top: -0.5rem; margin-bottom: 0.5rem;">Base tags from provider and capabilities are applied automatically.</p>
 
+        <label>Access Groups (comma separated)</label>
+        <input id="config-access-groups" type="text" placeholder="compat, tts" />
+        <p class="muted" style="margin-top: -0.5rem; margin-bottom: 0.5rem;">Inherits from provider if not set. Used for LiteLLM access control.</p>
+
         <label class="toggle-label" style="margin-top: 0.5rem;">
           <input type="checkbox" id="config-sync-enabled" />
           <span>Sync Enabled</span>
@@ -580,6 +584,8 @@ async function openConfigureModal(modelId) {
     document.getElementById('config-mode').value = model.ollama_mode || '';
     const currentTags = (model.user_tags && model.user_tags.length > 0) ? model.user_tags : (model.tags || []);
     document.getElementById('config-tags').value = currentTags.join(', ');
+    const currentAccessGroups = model.access_groups || [];
+    document.getElementById('config-access-groups').value = currentAccessGroups.join(', ');
     document.getElementById('config-sync-enabled').checked = model.sync_enabled !== false;
 
     document.getElementById('configure-modal').style.display = 'block';
@@ -618,6 +624,7 @@ async function saveModelConfig() {
   const modelId = document.getElementById('config-model-id').value;
   const paramsJson = document.getElementById('config-params').value;
   const tags = parseTagsInput(document.getElementById('config-tags').value);
+  const accessGroups = parseTagsInput(document.getElementById('config-access-groups').value);
   const syncEnabled = document.getElementById('config-sync-enabled').checked;
 
   let params;
@@ -632,7 +639,7 @@ async function saveModelConfig() {
     const response = await fetch(`/api/models/db/${modelId}/params`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ params, tags, sync_enabled: syncEnabled })
+      body: JSON.stringify({ params, tags, access_groups: accessGroups, sync_enabled: syncEnabled })
     });
 
     const result = await response.json();
