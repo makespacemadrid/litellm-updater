@@ -747,6 +747,44 @@ def create_app() -> FastAPI:
 
         return RedirectResponse(url="/admin", status_code=303)
 
+    @app.patch("/api/providers/{provider_id}/sync")
+    async def toggle_provider_sync(
+        provider_id: int,
+        payload: dict = Body(...),
+        session: AsyncSession = Depends(get_session),
+    ):
+        """Toggle sync_enabled for a provider."""
+        from .crud import get_provider_by_id, update_provider
+
+        provider = await get_provider_by_id(session, provider_id)
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+
+        sync_enabled = payload.get("sync_enabled")
+        if sync_enabled is None:
+            raise HTTPException(status_code=400, detail="sync_enabled is required")
+
+        try:
+            await update_provider(session, provider, sync_enabled=sync_enabled)
+            await session.commit()
+            logger.info(
+                "Updated sync_enabled=%s for provider %s (ID: %d)",
+                sync_enabled,
+                provider.name,
+                provider_id,
+            )
+            return {
+                "status": "success",
+                "provider_id": provider_id,
+                "sync_enabled": sync_enabled,
+            }
+        except Exception as exc:
+            logger.exception("Failed to update provider sync setting")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to update sync setting: {str(exc)}",
+            )
+
     @app.delete("/admin/providers/{provider_id}")
     async def delete_provider_endpoint(
         provider_id: int, session: AsyncSession = Depends(get_session)
@@ -1138,6 +1176,7 @@ def create_app() -> FastAPI:
             "is_orphaned": model.is_orphaned,
             "orphaned_at": model.orphaned_at.isoformat() if model.orphaned_at else None,
             "user_modified": model.user_modified,
+            "sync_enabled": model.sync_enabled,
             "first_seen": model.first_seen.isoformat(),
             "last_seen": model.last_seen.isoformat(),
             "provider": {
@@ -1169,16 +1208,18 @@ def create_app() -> FastAPI:
         is_dict_payload = isinstance(payload, dict)
         params = payload.get("params") if is_dict_payload and "params" in payload else payload
         tags = payload.get("tags") if is_dict_payload else None
+        sync_enabled = payload.get("sync_enabled") if is_dict_payload else None
+
         if isinstance(tags, str):
             normalized_tags = parse_tags_input(tags)
         else:
             normalized_tags = normalize_tags(tags) if tags is not None else None
 
-        if is_dict_payload and "params" not in payload and set(payload.keys()) == {"tags"}:
+        if is_dict_payload and "params" not in payload and set(payload.keys()) <= {"tags", "sync_enabled"}:
             params = None
 
         try:
-            await update_model_params(session, model, params, normalized_tags)
+            await update_model_params(session, model, params, normalized_tags, sync_enabled)
             await session.commit()
             logger.info("Updated parameters for model %s (ID: %d)", model.model_id, model_id)
 

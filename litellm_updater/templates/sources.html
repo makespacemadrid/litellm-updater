@@ -46,6 +46,11 @@
         <input id="config-tags" type="text" placeholder="team-a, prod, gpu" />
         <p class="muted" style="margin-top: -0.5rem; margin-bottom: 0.5rem;">Base tags from provider and capabilities are applied automatically.</p>
 
+        <label class="toggle-label" style="margin-top: 0.5rem;">
+          <input type="checkbox" id="config-sync-enabled" />
+          <span>Sync Enabled</span>
+        </label>
+
         <div class="modal-actions">
           <button type="button" class="btn-refresh" onclick="refreshModelInModal()">Refresh from Provider</button>
           <button type="button" class="btn-primary" onclick="saveModelConfig()">Save</button>
@@ -298,6 +303,30 @@
   justify-content: flex-end;
   margin-top: 1.5rem;
 }
+
+/* Toggle checkbox styling */
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+}
+
+.toggle-label input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+}
+
+.toggle-label span {
+  font-weight: 500;
+}
+
+.tab-panel-actions .toggle-label {
+  margin-right: 1rem;
+}
 </style>
 
 <script>
@@ -360,6 +389,11 @@ function renderTabs() {
           ${p.prefix ? `<br><span class="muted">Prefix: <strong>${p.prefix}</strong></span>` : ''}
         </div>
         <div class="tab-panel-actions">
+          <label class="toggle-label">
+            <input type="checkbox" id="provider-sync-${p.id}" ${p.sync_enabled ? 'checked' : ''}
+                   onchange="toggleProviderSync(${p.id}, this.checked)">
+            <span>Sync Enabled</span>
+          </label>
           <button class="btn-primary" onclick="syncProvider(${p.id})">Sync Provider</button>
         </div>
       </div>
@@ -450,6 +484,30 @@ async function syncProvider(providerId) {
   await syncAllProviders();
 }
 
+async function toggleProviderSync(providerId, enabled) {
+  try {
+    const response = await fetch(`/api/providers/${providerId}/sync`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sync_enabled: enabled })
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      console.log(`Provider ${providerId} sync ${enabled ? 'enabled' : 'disabled'}`);
+    } else {
+      alert(`✗ Failed to update sync setting: ${result.detail || 'Unknown error'}`);
+      // Revert checkbox state on error
+      document.getElementById(`provider-sync-${providerId}`).checked = !enabled;
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+    // Revert checkbox state on error
+    document.getElementById(`provider-sync-${providerId}`).checked = !enabled;
+  }
+}
+
 async function syncAllProviders() {
   const btn = document.getElementById('sync-all-btn');
   btn.disabled = true;
@@ -522,6 +580,7 @@ async function openConfigureModal(modelId) {
     document.getElementById('config-mode').value = model.ollama_mode || '';
     const currentTags = (model.user_tags && model.user_tags.length > 0) ? model.user_tags : (model.tags || []);
     document.getElementById('config-tags').value = currentTags.join(', ');
+    document.getElementById('config-sync-enabled').checked = model.sync_enabled !== false;
 
     document.getElementById('configure-modal').style.display = 'block';
   } catch (error) {
@@ -559,6 +618,7 @@ async function saveModelConfig() {
   const modelId = document.getElementById('config-model-id').value;
   const paramsJson = document.getElementById('config-params').value;
   const tags = parseTagsInput(document.getElementById('config-tags').value);
+  const syncEnabled = document.getElementById('config-sync-enabled').checked;
 
   let params;
   try {
@@ -572,7 +632,7 @@ async function saveModelConfig() {
     const response = await fetch(`/api/models/db/${modelId}/params`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ params, tags })
+      body: JSON.stringify({ params, tags, sync_enabled: syncEnabled })
     });
 
     const result = await response.json();

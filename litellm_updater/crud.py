@@ -348,16 +348,23 @@ async def mark_orphaned_models(
 
 
 async def update_model_params(
-    session: AsyncSession, model: Model, user_params: dict | None = None, user_tags: list[str] | None = None
+    session: AsyncSession,
+    model: Model,
+    user_params: dict | None = None,
+    user_tags: list[str] | None = None,
+    sync_enabled: bool | None = None,
 ) -> Model:
-    """Update model with user-edited parameters and tags."""
+    """Update model with user-edited parameters, tags, and sync settings."""
     if user_params is not None:
         model.user_params = json.dumps(user_params)
     if user_tags is not None:
         model.user_tags_list = normalize_tags(user_tags)
+    if sync_enabled is not None:
+        model.sync_enabled = sync_enabled
 
-    if user_params is not None or user_tags is not None:
-        model.user_modified = True
+    if user_params is not None or user_tags is not None or sync_enabled is not None:
+        if user_params is not None or user_tags is not None:
+            model.user_modified = True
         model.updated_at = datetime.now(UTC)
     return model
 
