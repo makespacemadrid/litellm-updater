@@ -1,0 +1,477 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>LiteLLM Models</h2>
+  {% if litellm_error %}
+  <p class="muted">{{ litellm_error }}</p>
+  {% else %}
+  <p class="muted">Fetched at {{ fetched_at or "Unknown" }}</p>
+  {% if litellm_models %}
+  <!-- Tag Filters -->
+  <div id="tag-filters" style="margin-bottom: 1rem;">
+    <div style="margin-bottom: 0.5rem; font-weight: 600;">Filter by Tags:</div>
+    <div id="tag-buttons" style="display: flex; flex-wrap: wrap; gap: 0.5rem;"></div>
+  </div>
+
+  <!-- Selection Controls -->
+  <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem;">
+    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+      <input type="checkbox" id="selectAll" style="cursor: pointer;">
+      <span>Seleccionar todos</span>
+    </label>
+    <span id="filter-count" class="muted"></span>
+  </div>
+
+  <!-- Bulk Actions Bar -->
+  <div class="bulk-actions bulk-actions--hidden" id="bulkActions">
+    <div class="bulk-actions__info">
+      <span id="selectedCount">0</span> modelos seleccionados
+    </div>
+    <div class="bulk-actions__buttons">
+      <button type="button" class="btn-delete" id="bulkDelete">
+        Eliminar seleccionados
+      </button>
+      <button type="button" id="bulkCancel">
+        Cancelar
+      </button>
+    </div>
+  </div>
+  <ul class="model-cards">
+    {% for model in litellm_models %}
+    {% if model is mapping %}
+      {% set mappable = model.get('litellm_fields', {}) or {} %}
+      {% set model_tags = model.get('tags', []) or [] %}
+      {% set raw_model = model.get('raw', {}) or {} %}
+      {% set display_id = model.get('database_id') or model.get('id') or model.get('model_name') %}
+      {% set model_name = model.get('model_name') or model.get('id') or 'unknown' %}
+      {% set capabilities = model.get('capabilities', []) or [] %}
+    {% else %}
+      {% set mappable = (model.litellm_fields if model.litellm_fields is defined and model.litellm_fields is not none else {}) %}
+      {% set model_tags = (model.tags if model.tags is defined and model.tags is not none else []) %}
+      {% set raw_model = (model.raw if model.raw is defined and model.raw is not none else {}) %}
+      {% set display_id = model.database_id or model.id %}
+      {% set model_name = model.id %}
+      {% set capabilities = model.capabilities if model.capabilities is defined and model.capabilities is not none else [] %}
+    {% endif %}
+    {% set details_obj = raw_model.get('details') if raw_model is mapping else {} %}
+    <li class="model-card" data-model-id="{{ display_id }}" data-tags="{{ model_tags | tojson | safe }}">
+      <!-- Checkbox -->
+      <div class="model-card__checkbox">
+        <input type="checkbox" class="model-checkbox" value="{{ display_id }}">
+      </div>
+
+      <!-- Model Header -->
+      <div class="model-card__header">
+        <div class="model-card__title">{{ model_name }}</div>
+        {% if details_obj %}
+        {% set details = details_obj %}
+        <div class="model-card__subtitle">
+          {% if details.get('family') %}{{ details.family }}{% endif %}
+          {% if details.get('parameter_size') %}
+            {% if details.get('family') %} - {% endif %}{{ details.parameter_size }}
+          {% endif %}
+          {% if details.get('quantization_level') %}
+            {% if details.get('family') or details.get('parameter_size') %} - {% endif %}{{ details.quantization_level }}
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Model Info -->
+      <div class="model-card__info">
+        <!-- Tags -->
+        {% if model_tags and model_tags|length > 0 %}
+        {% for tag in model_tags[:3] %}
+        <span class="badge badge-tag">{{ tag }}</span>
+        {% endfor %}
+        {% if model_tags|length > 3 %}
+        <span class="badge">+{{ model_tags|length - 3 }} tags</span>
+        {% endif %}
+        {% else %}
+        <span class="badge muted">Sin tags</span>
+        {% endif %}
+
+        <!-- Context Window -->
+        {% set context_value = model.max_input_tokens or model.context_window %}
+        {% if context_value %}
+        <span class="badge">
+          Context: {{ "{:,}".format(context_value) }}
+        </span>
+        {% endif %}
+
+        <!-- Capabilities (only actual capabilities, not model types) -->
+        {% if capabilities and capabilities|length > 0 %}
+        {% for capability in capabilities[:3] %}
+        <span class="badge badge-support">{{ capability }}</span>
+        {% endfor %}
+        {% if capabilities|length > 3 %}
+        <span class="badge">+{{ capabilities|length - 3 }} más</span>
+        {% endif %}
+        {% else %}
+        <span class="badge muted">No capabilities specified</span>
+        {% endif %}
+      </div>
+
+      <!-- Actions -->
+      <div class="model-card__actions">
+        <button type="button" class="btn-info toggle-details" data-index="{{ loop.index0 }}">
+          Info
+        </button>
+      <button type="button" class="btn-delete model-delete" data-model-id="{{ display_id }}">
+          Delete
+        </button>
+      </div>
+
+      <!-- Details (hidden by default) -->
+      <details class="model-card__details" style="grid-column: 1 / -1; margin-top: 0.5rem;">
+        <summary style="display: none;"></summary>
+        <div class="model-card__details-content">
+          <div class="litellm-fields-preview">
+            <p class="muted">Parámetros mapeables a la definición de LiteLLM:</p>
+            {% if mappable %}
+            <pre class="model-card__body" data-type="mappable"></pre>
+            {% else %}
+            <p class="muted">No se encontraron parámetros específicos de LiteLLM en la respuesta.</p>
+            {% endif %}
+          </div>
+          <details class="raw-data-toggle">
+            <summary>Ver datos completos (JSON)</summary>
+            <pre class="raw-data-json" data-type="raw"></pre>
+          </details>
+        </div>
+      </details>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No models were returned by the LiteLLM endpoint.</p>
+  {% endif %}
+  {% endif %}
+</section>
+<script>
+  // Store model data for display
+  const modelData = [
+    {% for model in litellm_models %}
+    {
+      mappable: {{ (model.litellm_fields or {}) | tojson | safe }},
+      raw: {{ (model.raw or {}) | tojson | safe }}
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
+
+  // Clean JSON by removing null, empty strings, and empty objects/arrays
+  function cleanJSON(obj) {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+
+    if (Array.isArray(obj)) {
+      const cleaned = obj.map(cleanJSON).filter(item => item !== null);
+      return cleaned.length > 0 ? cleaned : null;
+    }
+
+    const cleaned = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = cleanJSON(value);
+      if (cleanedValue !== null && cleanedValue !== '' &&
+          !(Array.isArray(cleanedValue) && cleanedValue.length === 0) &&
+          !(typeof cleanedValue === 'object' && Object.keys(cleanedValue).length === 0)) {
+        cleaned[key] = cleanedValue;
+      }
+    }
+
+    return Object.keys(cleaned).length > 0 ? cleaned : null;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const bulkActions = document.getElementById('bulkActions');
+    const selectedCount = document.getElementById('selectedCount');
+    const selectAllCheckbox = document.getElementById('selectAll');
+    const checkboxes = document.querySelectorAll('.model-checkbox');
+    const modelCards = document.querySelectorAll('.model-card');
+    let activeFilters = new Set();
+
+    // Extract all unique tags from models
+    function extractAllTags() {
+      const tagsSet = new Set();
+      modelCards.forEach(card => {
+        try {
+          const tags = JSON.parse(card.dataset.tags || '[]');
+          tags.forEach(tag => tagsSet.add(tag));
+        } catch (e) {
+          console.error('Failed to parse tags for card', e);
+        }
+      });
+      return Array.from(tagsSet).sort();
+    }
+
+    // Render tag filter buttons
+    function renderTagFilters() {
+      const allTags = extractAllTags();
+      const tagButtons = document.getElementById('tag-buttons');
+
+      if (allTags.length === 0) {
+        tagButtons.innerHTML = '<span class="muted">No tags found</span>';
+        return;
+      }
+
+      // Add "All" button
+      let html = '<button class="tag-filter active" data-tag="all">All</button>';
+
+      // Add button for each tag
+      allTags.forEach(tag => {
+        html += `<button class="tag-filter" data-tag="${tag}">${tag}</button>`;
+      });
+
+      tagButtons.innerHTML = html;
+
+      // Add click handlers
+      document.querySelectorAll('.tag-filter').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tag = btn.dataset.tag;
+
+          if (tag === 'all') {
+            // Clear all filters
+            activeFilters.clear();
+            document.querySelectorAll('.tag-filter').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+          } else {
+            // Remove "All" filter
+            document.querySelector('.tag-filter[data-tag="all"]')?.classList.remove('active');
+
+            // Toggle this filter
+            if (activeFilters.has(tag)) {
+              activeFilters.delete(tag);
+              btn.classList.remove('active');
+            } else {
+              activeFilters.add(tag);
+              btn.classList.add('active');
+            }
+
+            // If no filters active, activate "All"
+            if (activeFilters.size === 0) {
+              document.querySelector('.tag-filter[data-tag="all"]')?.classList.add('active');
+            }
+          }
+
+          applyFilters();
+        });
+      });
+    }
+
+    // Apply tag filters to model cards
+    function applyFilters() {
+      let visibleCount = 0;
+
+      modelCards.forEach(card => {
+        try {
+          const cardTags = JSON.parse(card.dataset.tags || '[]');
+
+          // If no filters active, show all
+          if (activeFilters.size === 0) {
+            card.style.display = '';
+            visibleCount++;
+            return;
+          }
+
+          // Check if card has ANY of the active filters
+          const hasMatchingTag = cardTags.some(tag => activeFilters.has(tag));
+
+          if (hasMatchingTag) {
+            card.style.display = '';
+            visibleCount++;
+          } else {
+            card.style.display = 'none';
+            // Uncheck hidden cards
+            const checkbox = card.querySelector('.model-checkbox');
+            if (checkbox && checkbox.checked) {
+              checkbox.checked = false;
+              card.classList.remove('model-card--selected');
+            }
+          }
+        } catch (e) {
+          console.error('Failed to apply filter to card', e);
+        }
+      });
+
+      // Update filter count
+      const filterCount = document.getElementById('filter-count');
+      if (activeFilters.size > 0) {
+        filterCount.textContent = `Showing ${visibleCount} of ${modelCards.length} models`;
+      } else {
+        filterCount.textContent = '';
+      }
+
+      updateBulkActions();
+    }
+
+    // Initialize tag filters
+    renderTagFilters();
+
+    // Update bulk actions visibility and select all checkbox state
+    function updateBulkActions() {
+      const checked = document.querySelectorAll('.model-checkbox:checked');
+      if (checked.length > 0) {
+        bulkActions.classList.remove('bulk-actions--hidden');
+        selectedCount.textContent = checked.length;
+      } else {
+        bulkActions.classList.add('bulk-actions--hidden');
+      }
+
+      // Update select all checkbox state
+      if (selectAllCheckbox) {
+        if (checked.length === 0) {
+          selectAllCheckbox.checked = false;
+          selectAllCheckbox.indeterminate = false;
+        } else if (checked.length === checkboxes.length) {
+          selectAllCheckbox.checked = true;
+          selectAllCheckbox.indeterminate = false;
+        } else {
+          selectAllCheckbox.checked = false;
+          selectAllCheckbox.indeterminate = true;
+        }
+      }
+    }
+
+    // Select all checkbox
+    selectAllCheckbox?.addEventListener('change', (e) => {
+      checkboxes.forEach(checkbox => {
+        checkbox.checked = e.target.checked;
+        const card = checkbox.closest('.model-card');
+        if (e.target.checked) {
+          card.classList.add('model-card--selected');
+        } else {
+          card.classList.remove('model-card--selected');
+        }
+      });
+      updateBulkActions();
+    });
+
+    // Checkbox selection
+    checkboxes.forEach((checkbox) => {
+      checkbox.addEventListener('change', (e) => {
+        const card = e.target.closest('.model-card');
+        if (e.target.checked) {
+          card.classList.add('model-card--selected');
+        } else {
+          card.classList.remove('model-card--selected');
+        }
+        updateBulkActions();
+      });
+    });
+
+    // Bulk cancel
+    document.getElementById('bulkCancel')?.addEventListener('click', () => {
+      checkboxes.forEach(cb => {
+        cb.checked = false;
+        cb.closest('.model-card').classList.remove('model-card--selected');
+      });
+      updateBulkActions();
+    });
+
+    // Bulk delete
+    document.getElementById('bulkDelete')?.addEventListener('click', async () => {
+      const checked = document.querySelectorAll('.model-checkbox:checked');
+      const modelIds = Array.from(checked).map(cb => cb.value);
+
+      if (modelIds.length === 0) {
+        alert('No hay modelos seleccionados');
+        return;
+      }
+
+      if (!confirm(`¿Estás seguro de que quieres eliminar ${modelIds.length} modelos?`)) {
+        return;
+      }
+
+      try {
+        // Use JSON to avoid form field limit (1000 fields max)
+        const response = await fetch('/litellm/models/delete/bulk', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ model_ids: modelIds })
+        });
+
+        if (response.ok) {
+          alert(`${modelIds.length} modelos eliminados exitosamente`);
+          location.reload();
+        } else {
+          const error = await response.json();
+          alert(`Error al eliminar modelos: ${error.detail || response.statusText}`);
+        }
+      } catch (error) {
+        console.error('Failed to delete models:', error);
+        alert(`Error de red al eliminar modelos: ${error.message}`);
+      }
+    });
+
+    // Individual delete
+    document.querySelectorAll('.model-delete').forEach((button) => {
+      button.addEventListener('click', async (e) => {
+        const modelId = e.target.dataset.modelId;
+
+        if (!confirm(`¿Estás seguro de que quieres eliminar el modelo ${modelId}?`)) {
+          return;
+        }
+
+        try {
+          button.disabled = true;
+          button.textContent = 'Eliminando...';
+
+          const formData = new FormData();
+          formData.append('model_id', modelId);
+
+          const response = await fetch('/litellm/models/delete', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (response.ok) {
+            alert(`Modelo ${modelId} eliminado exitosamente`);
+            location.reload();
+          } else {
+            const error = await response.json();
+            alert(`Error al eliminar modelo: ${error.detail || response.statusText}`);
+          }
+        } catch (error) {
+          console.error('Failed to delete model:', error);
+          alert(`Error de red al eliminar modelo: ${error.message}`);
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Delete';
+        }
+      });
+    });
+
+    // Toggle details
+    document.querySelectorAll('.toggle-details').forEach((button) => {
+      button.addEventListener('click', () => {
+        const index = parseInt(button.dataset.index);
+        const card = button.closest('.model-card');
+        const details = card.querySelector('.model-card__details');
+        const mappablePre = card.querySelector('pre[data-type="mappable"]');
+        const rawPre = card.querySelector('.raw-data-json');
+
+        // Toggle details
+        const isOpen = details.open;
+        if (!isOpen) {
+          // Populate with cleaned JSON when opening
+          if (mappablePre && modelData[index]) {
+            const cleanedMappable = cleanJSON(modelData[index].mappable);
+            mappablePre.textContent = JSON.stringify(cleanedMappable, null, 2);
+          }
+          if (rawPre && modelData[index]) {
+            const cleanedRaw = cleanJSON(modelData[index].raw);
+            rawPre.textContent = JSON.stringify(cleanedRaw, null, 2);
+          }
+          details.open = true;
+          button.textContent = 'Ocultar';
+        } else {
+          details.open = false;
+          button.textContent = 'Info';
+        }
+      });
+    });
+  });
+</script>
+{% endblock %}

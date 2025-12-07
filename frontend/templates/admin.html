@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="panel">
+  <h2>LiteLLM Destination</h2>
+  <form onsubmit="saveDestination(event)">
+    <label>Base URL <input type="text" name="litellm_base_url" value="{{ config.litellm.base_url or '' }}" /></label>
+    <label>API Key <input type="text" name="litellm_api_key" value="{{ config.litellm.api_key or '' }}" /></label>
+    <p class="muted">Leave Base URL empty to disable LiteLLM synchronization.</p>
+    <button type="submit">Save destination</button>
+  </form>
+</section>
+
+<style>
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0, 0, 0, 0.4);
+}
+
+.modal-content {
+  background-color: #fefefe;
+  margin: 10% auto;
+  padding: 1rem;
+  border: 1px solid #888;
+  width: 90%;
+  max-width: 700px;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.modal-body label {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+.modal-body input,
+.modal-body select {
+  width: 100%;
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  box-sizing: border-box;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.close {
+  cursor: pointer;
+  font-size: 1.5rem;
+}
+</style>
+
+<section class="panel">
+  <h2>Sync Interval</h2>
+  <form onsubmit="saveInterval(event)">
+    <label>Seconds <input type="number" name="sync_interval_seconds" value="{{ config.sync_interval_seconds }}" min="0" /></label>
+    <p class="muted">Set to 0 to disable automatic synchronization. Minimum when enabled: 30 seconds.</p>
+    <button type="submit">Update interval</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Providers</h2>
+  <div id="providers-list">Loading providers...</div>
+
+  <div style="margin-top: 1rem;">
+    <button class="btn-primary" type="button" onclick="openAddModal()">Add Provider</button>
+  </div>
+</section>
+
+<script>
+async function saveDestination(event) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+  try {
+    const response = await fetch('/api/admin/config', { method: 'POST', body: formData });
+    const result = await response.json();
+    if (response.ok) {
+      alert('Destination saved');
+    } else {
+      alert('Error: ' + (result.detail || 'Failed to save destination'));
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
+async function saveInterval(event) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+  try {
+    const response = await fetch('/api/admin/config', { method: 'POST', body: formData });
+    const result = await response.json();
+    if (response.ok) {
+      alert('Sync interval updated');
+    } else {
+      alert('Error: ' + (result.detail || 'Failed to update interval'));
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
+async function loadProviders() {
+  try {
+    const response = await fetch('/api/providers');
+    const providers = await response.json();
+
+    const container = document.getElementById('providers-list');
+    if (providers.length === 0) {
+      container.innerHTML = '<p class="muted">No providers configured. Add one below.</p>';
+      return;
+    }
+
+    container.innerHTML = '<ul>' + providers.map(p => `
+      <li>
+        <div>
+          <strong>${p.name}</strong> — ${p.type} (${p.base_url})
+          ${!p.sync_enabled ? '<span style="color: orange; font-weight: bold;"> [SYNC DISABLED]</span>' : ''}
+          ${p.prefix ? `<br><span class="muted">Prefix: ${p.prefix}</span>` : ''}
+          ${p.default_ollama_mode ? `<br><span class="muted">Ollama Mode: ${p.default_ollama_mode}</span>` : ''}
+          ${p.tags && p.tags.length ? `<br><span class="muted">Tags: ${p.tags.join(', ')}</span>` : ''}
+          ${p.access_groups && p.access_groups.length ? `<br><span class="muted">Access Groups: ${p.access_groups.join(', ')}</span>` : ''}
+        </div>
+        <div style="margin-top: 6px;">
+          <button onclick="openEditProvider(${p.id})" type="button">Edit</button>
+          <button onclick="deleteProvider(${p.id}, '${p.name}')" type="button">Delete</button>
+        </div>
+      </li>
+    `).join('') + '</ul>';
+  } catch (error) {
+    document.getElementById('providers-list').innerHTML =
+      '<p style="color: red;">Error loading providers: ' + error.message + '</p>';
+  }
+}
+
+async function addProvider(event) {
+  event.preventDefault();
+  const form = event.target;
+  const formData = new FormData(form);
+  formData.set('sync_enabled', form.querySelector('input[name="sync_enabled"]').checked ? 'true' : 'false');
+
+  try {
+    const response = await fetch('/api/providers', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (response.redirected) {
+      window.location.href = response.url;
+    } else if (response.ok) {
+      form.reset();
+      closeAddModal();
+      await loadProviders();
+      alert('Provider added successfully');
+    } else {
+      const error = await response.json();
+      alert('Error: ' + (error.detail || 'Failed to add provider'));
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
+async function deleteProvider(id, name) {
+  if (!confirm(`Delete provider "${name}"? This will also delete all associated models.`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/providers/${id}`, {
+      method: 'DELETE'
+    });
+
+    if (response.ok) {
+      await loadProviders();
+      alert('Provider deleted successfully');
+    } else {
+      const error = await response.json();
+      alert('Error: ' + (error.detail || 'Failed to delete provider'));
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
+function openAddModal() {
+  document.getElementById('add-provider-form').reset();
+  document.querySelector('#add-provider-form input[name="sync_enabled"]').checked = true;
+  document.getElementById('add-provider-modal').style.display = 'block';
+  toggleOllamaFields();
+}
+
+function closeAddModal() {
+  document.getElementById('add-provider-modal').style.display = 'none';
+}
+
+function toggleOllamaFields() {
+  const type = document.getElementById('provider-type').value;
+  const ollamaFields = document.getElementById('ollama-fields');
+  ollamaFields.style.display = type === 'ollama' ? 'block' : 'none';
+}
+
+function toggleEditOllamaFields() {
+  const type = document.getElementById('edit-provider-type').value;
+  const ollamaFields = document.getElementById('edit-ollama-fields');
+  ollamaFields.style.display = type === 'ollama' ? 'block' : 'none';
+}
+
+async function openEditProvider(id) {
+  try {
+    const response = await fetch(`/api/providers/${id}`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      alert('Error loading provider: ' + (err.detail || response.statusText));
+      return;
+    }
+    const provider = await response.json();
+    if (!provider) {
+      alert('Provider not found');
+      return;
+    }
+
+    document.getElementById('edit-provider-id').value = provider.id;
+    document.getElementById('edit-name').value = provider.name;
+    document.getElementById('edit-base-url').value = provider.base_url;
+    document.getElementById('edit-provider-type').value = provider.type;
+    document.getElementById('edit-api-key').value = provider.api_key || '';
+    document.getElementById('edit-prefix').value = provider.prefix || '';
+    document.getElementById('edit-default-ollama-mode').value = provider.default_ollama_mode || '';
+    document.getElementById('edit-tags').value = (provider.tags || []).join(', ');
+    document.getElementById('edit-access-groups').value = (provider.access_groups || []).join(', ');
+    document.getElementById('edit-sync-enabled').checked = provider.sync_enabled !== false;
+    toggleEditOllamaFields();
+
+    document.getElementById('edit-provider-modal').style.display = 'block';
+  } catch (error) {
+    alert('Error loading provider: ' + error.message);
+  }
+}
+
+function closeEditModal() {
+  document.getElementById('edit-provider-modal').style.display = 'none';
+}
+
+async function saveProviderEdits(event) {
+  event.preventDefault();
+  const id = document.getElementById('edit-provider-id').value;
+  const form = document.getElementById('edit-provider-form');
+  const formData = new FormData(form);
+  formData.set('sync_enabled', document.getElementById('edit-sync-enabled').checked ? 'true' : 'false');
+
+  try {
+    const response = await fetch(`/api/providers/${id}`, {
+      method: 'PATCH',
+      body: formData
+    });
+
+    if (response.ok) {
+      closeEditModal();
+      await loadProviders();
+      alert('Provider updated successfully');
+    } else {
+      const error = await response.json();
+      alert('Error: ' + (error.detail || 'Failed to update provider'));
+    }
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
+}
+
+// Load providers on page load
+document.addEventListener('DOMContentLoaded', () => {
+  loadProviders();
+  toggleOllamaFields();
+});
+</script>
+
+<!-- Add Provider Modal -->
+<div id="add-provider-modal" class="modal" style="display: none;">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h3>Add Provider</h3>
+      <span class="close" onclick="closeAddModal()">&times;</span>
+    </div>
+    <div class="modal-body">
+      <form id="add-provider-form" onsubmit="addProvider(event)">
+        <label>Name <input type="text" name="name" required /></label>
+        <label>Base URL <input type="text" name="base_url" required placeholder="http://localhost:11434" /></label>
+        <label>
+          Type
+          <select name="type" id="provider-type" required onchange="toggleOllamaFields()">
+            <option value="ollama">Ollama</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </label>
+        <label>API Key <input type="text" name="api_key" /></label>
+        <label>Prefix <input type="text" name="prefix" placeholder="e.g., mks-ollama" /></label>
+        <label>Tags <input type="text" name="tags" placeholder="Comma separated (e.g., team-a, prod)" /></label>
+        <label>Access Groups <input type="text" name="access_groups" placeholder="Comma separated (e.g., compat, tts)" /></label>
+        <div id="ollama-fields">
+          <label>
+            Default Ollama Mode
+            <select name="default_ollama_mode">
+              <option value="">None</option>
+              <option value="ollama_chat">Ollama Chat (recommended)</option>
+              <option value="ollama">Ollama</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </label>
+        </div>
+        <label style="display: flex; align-items: center; gap: 0.5rem;">
+          <input type="checkbox" name="sync_enabled" checked />
+          <span>Sync Enabled</span>
+        </label>
+        <div class="modal-actions" style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
+          <button type="button" onclick="closeAddModal()">Cancel</button>
+          <button type="submit" class="btn-primary">Add Provider</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Provider Modal -->
+<div id="edit-provider-modal" class="modal" style="display: none;">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h3>Edit Provider</h3>
+      <span class="close" onclick="closeEditModal()">&times;</span>
+    </div>
+    <div class="modal-body">
+      <form id="edit-provider-form" onsubmit="saveProviderEdits(event)">
+        <input type="hidden" id="edit-provider-id" name="id" />
+        <label>Name <input type="text" id="edit-name" name="name" required /></label>
+        <label>Base URL <input type="text" id="edit-base-url" name="base_url" required /></label>
+        <label>
+          Type
+          <select id="edit-provider-type" name="type" required onchange="toggleEditOllamaFields()">
+            <option value="ollama">Ollama</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </label>
+        <label>API Key <input type="text" id="edit-api-key" name="api_key" /></label>
+        <label>Prefix <input type="text" id="edit-prefix" name="prefix" placeholder="e.g., mks-ollama" /></label>
+        <label>Tags <input type="text" id="edit-tags" name="tags" placeholder="Comma separated" /></label>
+        <label>Access Groups <input type="text" id="edit-access-groups" name="access_groups" placeholder="Comma separated (e.g., compat, tts)" /></label>
+        <div id="edit-ollama-fields">
+          <label>
+            Default Ollama Mode
+            <select id="edit-default-ollama-mode" name="default_ollama_mode">
+              <option value="">None</option>
+              <option value="ollama_chat">Ollama Chat (recommended)</option>
+              <option value="ollama">Ollama</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </label>
+        </div>
+        <label style="display: flex; align-items: center; gap: 0.5rem;">
+          <input type="checkbox" id="edit-sync-enabled" name="sync_enabled" />
+          <span>Sync Enabled</span>
+        </label>
+        <div class="modal-actions" style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
+          <button type="button" onclick="closeEditModal()">Cancel</button>
+          <button type="submit" class="btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

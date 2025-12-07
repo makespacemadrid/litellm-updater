@@ -1,0 +1,881 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Providers & Models</h2>
+  <p class="muted">
+    Models are loaded from the database.
+    <span style="color: #d32f2f;">Red</span> = Orphaned (no longer in provider).
+    <span style="color: #1976d2;">Blue</span> = Modified (database differs from provider).
+  </p>
+
+  <!-- Global Action Buttons -->
+  <div class="global-actions">
+    <button id="fetch-all-btn" class="btn-primary" onclick="fetchAllProviders()">Fetch All Providers</button>
+    <button id="sync-all-btn" class="btn-refresh" onclick="syncAllProviders()">Sync All Providers</button>
+    <button id="sync-litellm-btn" class="btn-success" onclick="syncToLiteLLM()">Push All to LiteLLM</button>
+    <button id="reset-db-btn" class="btn-danger" onclick="deleteAllModelsFromDB()">Reset Model Database</button>
+  </div>
+
+  <!-- Provider Tabs -->
+  <div id="provider-tabs" class="tabs-container">
+    <div class="tabs-header" id="tabs-header">Loading providers...</div>
+    <div class="tabs-content" id="tabs-content"></div>
+  </div>
+</section>
+
+<!-- Configure Modal -->
+<div id="configure-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="modal-title">Configure Model</h3>
+      <span class="close" onclick="closeConfigureModal()">&times;</span>
+    </div>
+    <div class="modal-body">
+      <form id="configure-form">
+        <input type="hidden" id="config-model-id" />
+
+        <label>Model Parameters (JSON)</label>
+        <textarea id="config-params" rows="10"></textarea>
+
+        <label>Ollama Mode</label>
+        <select id="config-mode">
+          <option value="">Default</option>
+          <option value="ollama_chat">Ollama Chat</option>
+          <option value="ollama">Ollama</option>
+          <option value="openai">OpenAI</option>
+        </select>
+
+        <label>Tags (comma separated)</label>
+        <input id="config-tags" type="text" placeholder="team-a, prod, gpu" />
+        <p class="muted" style="margin-top: -0.5rem; margin-bottom: 0.5rem;">Base tags from provider and capabilities are applied automatically.</p>
+
+        <label>Access Groups (comma separated)</label>
+        <input id="config-access-groups" type="text" placeholder="compat, tts" />
+        <p class="muted" style="margin-top: -0.5rem; margin-bottom: 0.5rem;">Inherits from provider if not set. Used for LiteLLM access control.</p>
+
+        <label class="toggle-label" style="margin-top: 0.5rem;">
+          <input type="checkbox" id="config-sync-enabled" />
+          <span>Sync Enabled</span>
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-refresh" onclick="refreshModelInModal()">Refresh from Provider</button>
+          <button type="button" class="btn-primary" onclick="saveModelConfig()">Save</button>
+          <button type="button" class="btn-success" onclick="saveAndPushModel()">Save & Push to LiteLLM</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Global Actions */
+.global-actions {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.btn-primary {
+  background: #1976d2;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-success {
+  background: #388e3c;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-refresh {
+  background: #f57c00;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-danger {
+  background: #d32f2f;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: #b71c1c;
+}
+
+/* Tabs */
+.tabs-container {
+  margin-top: 1rem;
+}
+
+.tabs-header {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 2px solid #e0e0e0;
+  margin-bottom: 1rem;
+}
+
+.tab {
+  padding: 0.75rem 1.5rem;
+  background: #f5f5f5;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  background: #e0e0e0;
+}
+
+.tab.active {
+  background: white;
+  border-bottom-color: #1976d2;
+  color: #1976d2;
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+.tab-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: #f9f9f9;
+  border-radius: 4px;
+}
+
+.tab-panel-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Model List */
+.model-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.model-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  background: #f9f9f9;
+  border-radius: 4px;
+}
+
+.model-item.orphaned {
+  background: #ffebee;
+  border-left: 3px solid #d32f2f;
+}
+
+.model-item.orphaned .model-name {
+  color: #d32f2f;
+}
+
+.model-item.modified .model-name {
+  color: #1976d2;
+  font-weight: 600;
+}
+
+.model-info {
+  flex: 1;
+}
+
+.model-name {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.model-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.model-meta {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  margin: 0 0.25rem;
+  background: #e0e0e0;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.badge.modified {
+  background: #1976d2;
+  color: white;
+}
+
+.badge.orphaned {
+  background: #d32f2f;
+  color: white;
+}
+
+/* Modal */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+  background-color: #fefefe;
+  margin: 5% auto;
+  padding: 0;
+  border: 1px solid #888;
+  border-radius: 8px;
+  width: 80%;
+  max-width: 600px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.close {
+  color: #aaa;
+  font-size: 28px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.close:hover {
+  color: #000;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.modal-body label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.modal-body textarea {
+  width: 100%;
+  padding: 0.5rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.modal-body select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.modal-body input[type="text"] {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+/* Toggle checkbox styling */
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+}
+
+.toggle-label input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+}
+
+.toggle-label span {
+  font-weight: 500;
+}
+
+.tab-panel-actions .toggle-label {
+  margin-right: 1rem;
+}
+</style>
+
+<script>
+let providers = [];
+let activeTabId = null;
+
+function parseTagsInput(raw) {
+  if (!raw) return [];
+
+  const seen = new Set();
+  const tags = [];
+
+  raw.split(',').forEach(part => {
+    const normalized = part.trim().replace(/\s+/g, '-').toLowerCase();
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      tags.push(normalized);
+    }
+  });
+
+  return tags;
+}
+
+async function loadProviders() {
+  try {
+    const response = await fetch('/api/providers');
+    if (!response.ok) throw new Error('Failed to load providers');
+
+    providers = await response.json();
+    renderTabs();
+  } catch (error) {
+    document.getElementById('tabs-header').innerHTML =
+      `<p style="color: red;">Error loading providers: ${error.message}</p>`;
+  }
+}
+
+function renderTabs() {
+  const tabsHeader = document.getElementById('tabs-header');
+  const tabsContent = document.getElementById('tabs-content');
+
+  if (providers.length === 0) {
+    tabsHeader.innerHTML = '<p class="muted">No providers configured. Add providers in the admin page.</p>';
+    tabsContent.innerHTML = '';
+    return;
+  }
+
+  // Render tab buttons
+  const tabButtons = providers.map((p, idx) =>
+    `<button class="tab ${idx === 0 ? 'active' : ''}" onclick="switchTab(event, ${p.id})">${p.name}</button>`
+  ).join('');
+  tabsHeader.innerHTML = tabButtons;
+
+  // Render tab panels
+  tabsContent.innerHTML = providers.map((p, idx) =>
+    `<div id="tab-${p.id}" class="tab-panel ${idx === 0 ? 'active' : ''}">
+      <div class="tab-panel-header">
+        <div>
+          <strong>${p.name}</strong>
+          <span class="muted"> — ${p.type} — ${p.base_url}</span>
+          ${p.prefix ? `<br><span class="muted">Prefix: <strong>${p.prefix}</strong></span>` : ''}
+        </div>
+        <div class="tab-panel-actions">
+          <label class="toggle-label">
+            <input type="checkbox" id="provider-sync-${p.id}" ${p.sync_enabled ? 'checked' : ''}
+                   onchange="toggleProviderSync(${p.id}, this.checked)">
+            <span>Sync Enabled</span>
+          </label>
+          <button class="btn-primary" onclick="fetchProvider(${p.id})">Fetch</button>
+          <button class="btn-refresh" onclick="syncProvider(${p.id})">Sync</button>
+          <button class="btn-success" onclick="pushProvider(${p.id})">Push</button>
+        </div>
+      </div>
+      <div id="models-${p.id}">Loading models...</div>
+    </div>`
+  ).join('');
+
+  // Load models for all providers
+  providers.forEach(p => loadProviderModels(p.id));
+  activeTabId = providers[0].id;
+}
+
+function switchTab(evt, providerId) {
+  // Update tab buttons
+  document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+  evt.target.classList.add('active');
+
+  // Update tab panels
+  document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+  document.getElementById(`tab-${providerId}`).classList.add('active');
+
+  activeTabId = providerId;
+}
+
+async function loadProviderModels(providerId) {
+  const container = document.getElementById(`models-${providerId}`);
+
+  try {
+    const response = await fetch(`/api/providers/${providerId}/models?include_orphaned=true`);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to load models');
+    }
+
+    const data = await response.json();
+    const models = Array.isArray(data) ? data : (data.models || []);
+
+    if (models.length === 0) {
+      container.innerHTML = '<p class="muted">No models synced yet</p>';
+      return;
+    }
+
+    container.innerHTML = renderModels(models);
+  } catch (error) {
+    container.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+  }
+}
+
+function renderModels(models) {
+  const items = models.map(model => {
+    const orphanedClass = model.is_orphaned ? 'orphaned' : '';
+    const modifiedClass = model.user_modified ? 'modified' : '';
+    const displayName = model.display_name || model.model_id;
+
+    // Build metadata badges
+    const badges = [];
+    if (model.context_window) {
+      badges.push(`Context: ${model.context_window.toLocaleString()}`);
+    }
+    if (model.capabilities && model.capabilities.length > 0) {
+      badges.push(...model.capabilities.slice(0, 2));
+    }
+    if (model.tags && model.tags.length > 0) {
+      badges.push(...model.tags.slice(0, 2).map(tag => `#${tag}`));
+    }
+
+    const modifiedBadge = model.user_modified ? '<span class="badge modified">Modified</span>' : '';
+    const orphanedBadge = model.is_orphaned ? '<span class="badge orphaned">Orphaned</span>' : '';
+
+    return `
+      <li class="model-item ${orphanedClass} ${modifiedClass}">
+        <div class="model-info">
+          <div class="model-name">${displayName}</div>
+          <div class="model-meta">
+            ${badges.map(b => `<span class="badge">${b}</span>`).join('')}
+            ${modifiedBadge}
+            ${orphanedBadge}
+          </div>
+        </div>
+        <div class="model-actions">
+          <button class="btn-primary" onclick="openConfigureModal(${model.id})">Configure</button>
+          <button class="btn-danger" onclick="deleteModelFromDB(${model.id}, '${displayName}')">Delete</button>
+        </div>
+      </li>
+    `;
+  }).join('');
+
+  return `<ul class="model-list">${items}</ul>`;
+}
+
+async function fetchProvider(providerId) {
+  const button = document.querySelector(`#tab-${providerId} .tab-panel-header .btn-primary`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Fetching...';
+  }
+  try {
+    const response = await fetch(`/api/providers/${providerId}/fetch-now`, { method: 'POST' });
+    const result = await response.json();
+    if (response.ok) {
+      alert(`✓ Fetch started for ${result.provider || 'provider'}`);
+      await loadProviderModels(providerId);
+    } else {
+      alert(`✗ Fetch failed: ${result.detail || result.error || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Fetch';
+    }
+  }
+}
+
+async function syncProvider(providerId) {
+  const button = document.querySelector(`#tab-${providerId} .tab-panel-header .btn-refresh`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Syncing...';
+  }
+  try {
+    const response = await fetch(`/api/providers/${providerId}/sync-now`, { method: 'POST' });
+    const result = await response.json();
+    if (response.ok) {
+      alert(`✓ Sync started for ${result.provider || 'provider'}`);
+      await loadProviderModels(providerId);
+    } else {
+      alert(`✗ Sync failed: ${result.detail || result.error || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Sync';
+    }
+  }
+}
+
+async function pushProvider(providerId) {
+  const btn = document.querySelector(`#tab-${providerId} .tab-panel-header .btn-success`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Pushing...';
+  }
+  try {
+    const response = await fetch(`/api/providers/${providerId}/push`, { method: 'POST' });
+    const result = await response.json();
+    if (response.ok) {
+      alert(`✓ Pushed models for ${result.provider}`);
+    } else {
+      alert(`✗ Push failed: ${result.detail || result.error || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Push';
+    }
+  }
+}
+
+async function toggleProviderSync(providerId, enabled) {
+  try {
+    const response = await fetch(`/api/providers/${providerId}/sync`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sync_enabled: enabled })
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      console.log(`Provider ${providerId} sync ${enabled ? 'enabled' : 'disabled'}`);
+    } else {
+      alert(`✗ Failed to update sync setting: ${result.detail || 'Unknown error'}`);
+      // Revert checkbox state on error
+      document.getElementById(`provider-sync-${providerId}`).checked = !enabled;
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+    // Revert checkbox state on error
+    document.getElementById(`provider-sync-${providerId}`).checked = !enabled;
+  }
+}
+
+async function fetchAllProviders() {
+  const btn = document.getElementById('fetch-all-btn');
+  btn.disabled = true;
+  btn.textContent = 'Fetching...';
+
+  try {
+    const response = await fetch('/api/providers/fetch-all', { method: 'POST' });
+    const result = await response.json();
+
+    if (response.ok) {
+      const summary = (result.results || []).map(r => {
+        if (r.error) return `${r.provider}: error ${r.error}`;
+        const stats = r.stats || {};
+        return `${r.provider}: +${stats.added || 0}/~${stats.updated || 0}/orphaned ${stats.orphaned || 0}`;
+      }).join('\n');
+      alert(`✓ Fetch completed\n\n${summary || 'No providers fetched'}`);
+      await loadProviders(); // Reload all providers
+    } else {
+      alert(`✗ Fetch failed: ${result.detail || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Fetch All Providers';
+  }
+}
+
+async function syncAllProviders() {
+  const btn = document.getElementById('sync-all-btn');
+  btn.disabled = true;
+  btn.textContent = 'Syncing...';
+
+  try {
+    const response = await fetch('/api/providers/sync-all', { method: 'POST' });
+    const result = await response.json();
+
+    if (response.ok) {
+      const summary = (result.results || []).map(r => {
+        if (r.error) return `${r.provider}: error ${r.error}`;
+        const stats = r.stats || {};
+        return `${r.provider}: +${stats.added || 0}/~${stats.updated || 0}/orphaned ${stats.orphaned || 0}`;
+      }).join('\n');
+      alert(`✓ Sync completed (fetched + pushed)\n\n${summary || 'No providers synced'}`);
+      await loadProviders();
+    } else {
+      alert(`✗ Sync failed: ${result.detail || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sync All Providers';
+  }
+}
+
+async function syncToLiteLLM() {
+  const btn = document.getElementById('sync-litellm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Pushing...';
+
+  try {
+    const response = await fetch('/api/models/push-all', { method: 'POST' });
+    const result = await response.json();
+
+    if (!response.ok) {
+      alert(`✗ Push failed: ${result.detail || 'Unknown error'}`);
+      return;
+    }
+
+    const successes = result.results?.success || 0;
+    const failures = result.results?.failed || 0;
+    const errors = result.results?.errors || [];
+    const total = successes + failures;
+
+    let message = `✓ ${result.message || 'Push complete'}\n\n`;
+    message += `Success: ${successes}\n`;
+    message += `Failed: ${failures}\n`;
+    message += `Total: ${total}`;
+
+    if (errors.length > 0) {
+      message += `\n\nErrors (first 5):\n`;
+      message += errors.slice(0, 5).join('\n');
+    }
+
+    alert(message);
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Push All to LiteLLM';
+  }
+}
+
+async function openConfigureModal(modelId) {
+  try {
+    const response = await fetch(`/api/models/${modelId}`);
+    if (!response.ok) throw new Error('Failed to load model');
+
+    const model = await response.json();
+
+    document.getElementById('config-model-id').value = modelId;
+    document.getElementById('modal-title').textContent = `Configure ${model.display_name}`;
+    const paramsForEditor = { ...(model.effective_params || {}) };
+    delete paramsForEditor.tags;
+    document.getElementById('config-params').value = JSON.stringify(paramsForEditor, null, 2);
+    document.getElementById('config-mode').value = model.ollama_mode || '';
+    const currentTags = (model.user_tags && model.user_tags.length > 0) ? model.user_tags : (model.tags || []);
+    document.getElementById('config-tags').value = currentTags.join(', ');
+    const currentAccessGroups = model.access_groups || [];
+    document.getElementById('config-access-groups').value = currentAccessGroups.join(', ');
+    document.getElementById('config-sync-enabled').checked = model.sync_enabled !== false;
+
+    document.getElementById('configure-modal').style.display = 'block';
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+function closeConfigureModal() {
+  document.getElementById('configure-modal').style.display = 'none';
+}
+
+async function refreshModelInModal() {
+  const modelId = document.getElementById('config-model-id').value;
+
+  try {
+    const response = await fetch(`/api/models/${modelId}/refresh`, {
+      method: 'POST'
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      alert(`✓ ${result.message}`);
+      // Reload model data in modal
+      await openConfigureModal(parseInt(modelId));
+    } else {
+      alert(`✗ ${result.detail || 'Refresh failed'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+async function saveModelConfig() {
+  const modelId = document.getElementById('config-model-id').value;
+  const paramsJson = document.getElementById('config-params').value;
+  const tags = parseTagsInput(document.getElementById('config-tags').value);
+  const accessGroups = parseTagsInput(document.getElementById('config-access-groups').value);
+  const syncEnabled = document.getElementById('config-sync-enabled').checked;
+
+  let params;
+  try {
+    params = JSON.parse(paramsJson);
+  } catch (error) {
+    alert(`Invalid JSON: ${error.message}`);
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/models/${modelId}/params`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params, tags, access_groups: accessGroups, sync_enabled: syncEnabled })
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      alert(`✓ ${result.message}`);
+      closeConfigureModal();
+      await loadProviders(); // Reload to show updated state
+      return true;
+    } else {
+      alert(`✗ ${result.detail || 'Save failed'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+
+  return false;
+}
+
+async function saveAndPushModel() {
+  const saved = await saveModelConfig();
+  if (!saved) return;
+
+  const modelId = document.getElementById('config-model-id').value;
+
+  try {
+    const response = await fetch(`/api/models/${modelId}/push`, {
+      method: 'POST'
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      alert(`✓ Pushed to LiteLLM: ${result.message}`);
+    } else {
+      alert(`✗ Push failed: ${result.detail || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+async function deleteModelFromDB(modelId, modelName) {
+  if (!confirm(`Are you sure you want to delete model "${modelName}" from the database?\n\nThis will remove all configuration and history for this model.`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/models/${modelId}`, {
+      method: 'DELETE'
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      alert(`✓ Model deleted: ${result.message}`);
+      await loadProviders(); // Reload to refresh the UI
+    } else {
+      alert(`✗ Delete failed: ${result.detail || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+async function deleteAllModelsFromDB() {
+  if (!confirm('⚠️ WARNING: This will delete ALL models from the database!\n\nThis action cannot be undone. Are you absolutely sure?')) {
+    return;
+  }
+
+  if (!confirm('This is your last chance to cancel. Delete ALL models from database?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/models/db/reset-all', {
+      method: 'POST'
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      alert(`✓ Database reset: ${result.message}`);
+      await loadProviders(); // Reload to refresh the UI
+    } else {
+      alert(`✗ Reset failed: ${result.detail || 'Unknown error'}`);
+    }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+  const modal = document.getElementById('configure-modal');
+  if (event.target === modal) {
+    closeConfigureModal();
+  }
+}
+
+// Load on page load
+document.addEventListener('DOMContentLoaded', loadProviders);
+</script>
+
+{% endblock %}

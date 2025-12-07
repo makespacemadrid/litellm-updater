@@ -1,20 +1,51 @@
 services:
-  litellm-updater:
-    build: .
-    image: litellm-updater:latest
-    env_file:
-      - .env
-    ports:
-      - "${PORT:-8000}:${PORT:-8000}"
+  # Backend sync worker (no HTTP server)
+  model-updater-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: model-updater-backend
+    restart: unless-stopped
     volumes:
       - ./data:/app/data
-      - ./.env:/app/.env
-    labels:
-      com.centurylinklabs.watchtower.enable: "true"
-    command: >
-      uvicorn litellm_updater.web:create_app --host 0.0.0.0 --port ${PORT:-8000} --workers ${UVICORN_WORKERS:-1} --log-level ${LOG_LEVEL:-info}
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     networks:
       - litellm
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 256M
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  # Frontend API + UI
+  model-updater-web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: model-updater-web
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4001}:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      - model-updater-backend
+    networks:
+      - litellm
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
 
   litellm:
     image: ghcr.io/berriai/litellm:main-stable

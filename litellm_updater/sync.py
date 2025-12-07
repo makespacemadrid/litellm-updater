@@ -117,9 +117,12 @@ async def _reconcile_litellm_for_provider(
     litellm_index: dict[str, ModelMetadata] = {}
     for m in litellm_models:
         tags = set(m.tags or [])
+        if isinstance(m.raw, dict):
+            tags.update(m.raw.get("litellm_params", {}).get("tags", []) or [])
+            tags.update(m.raw.get("model_info", {}).get("tags", []) or [])
         unique_id_tag = next((t for t in tags if t.startswith("unique_id:")), None)
         if unique_id_tag:
-            litellm_index[unique_id_tag] = m
+            litellm_index[unique_id_tag.lower()] = m
 
     active_ids = [m.model_id for m in provider_models if not m.is_orphaned]
 

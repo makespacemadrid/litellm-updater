@@ -2,11 +2,15 @@
 from pathlib import Path
 from typing import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from alembic import command
 from alembic.config import Config
 from alembic.util.exc import CommandError
+import logging
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = Path("data/models.db")
 
@@ -27,10 +31,26 @@ def get_sync_database_url(path: Path = DEFAULT_DB_PATH) -> str:
 
 
 def create_engine(db_url: str | None = None) -> AsyncEngine:
-    """Create async SQLAlchemy engine."""
+    """Create async SQLAlchemy engine with WAL mode for SQLite."""
     if db_url is None:
         db_url = get_database_url()
-    return create_async_engine(db_url, echo=False, future=True)
+
+    # Configure connection args for SQLite with WAL mode and timeouts
+    connect_args = {}
+    if "sqlite" in db_url:
+        connect_args = {
+            "check_same_thread": False,
+            "timeout": 30.0,  # Wait up to 30s for locks
+        }
+
+    engine = create_async_engine(
+        db_url,
+        echo=False,
+        future=True,
+        connect_args=connect_args,
+    )
+
+    return engine
 
 
 def run_migrations(
@@ -39,11 +59,29 @@ def run_migrations(
     script_location: Path | str | None = None,
 ) -> None:
     """Apply alembic migrations up to head."""
+    import sqlite3
 
     base_dir = Path(__file__).resolve().parent.parent
-    db_url = db_url or get_database_url()
+    db_url = db_url or get_sync_database_url()
     config_path = Path(config_path) if config_path else base_dir / "alembic.ini"
     script_location = Path(script_location) if script_location else base_dir / "alembic"
+
+    # Check if alembic_version table exists and has the latest version
+    # to avoid blocking on already-migrated databases
+    if db_url.startswith("sqlite"):
+        db_path = db_url.replace("sqlite:///", "")
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT version_num FROM alembic_version LIMIT 1")
+            version = cursor.fetchone()
+            conn.close()
+            if version:
+                logger.info(f"Database already at version {version[0]}, skipping migrations")
+                return
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            # Table doesn't exist or can't be queried, continue with migrations
+            pass
 
     alembic_config = Config(str(config_path))
     alembic_config.set_main_option("script_location", str(script_location))

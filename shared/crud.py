@@ -191,7 +191,7 @@ async def get_models_by_provider(
     session: AsyncSession, provider_id: int, include_orphaned: bool = True
 ) -> list[Model]:
     """Get all models for a provider."""
-    query = select(Model).where(Model.provider_id == provider_id)
+    query = select(Model).where(Model.provider_id == provider_id).options(selectinload(Model.provider))
 
     if not include_orphaned:
         query = query.where(Model.is_orphaned == False)  # noqa: E712

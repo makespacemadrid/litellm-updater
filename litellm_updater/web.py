@@ -1705,7 +1705,11 @@ def create_app() -> FastAPI:
                 LitellmDestination(base_url=config.litellm.base_url, api_key=config.litellm.api_key)
             )
             for m in litellm_models:
-                unique_id_tag = next((t for t in (m.tags or []) if t.startswith("unique_id:")), None)
+                combined_tags = set(m.tags or [])
+                if isinstance(m.raw, dict):
+                    combined_tags.update(m.raw.get("litellm_params", {}).get("tags", []) or [])
+                    combined_tags.update(m.raw.get("model_info", {}).get("tags", []) or [])
+                unique_id_tag = next((t for t in combined_tags if isinstance(t, str) and t.startswith("unique_id:")), None)
                 if unique_id_tag:
                     # Normalize to lowercase for case-insensitive comparison
                     existing_unique_ids.add(unique_id_tag.lower())

@@ -9,8 +9,14 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # Import your models' metadata
-from litellm_updater.db_models import Base
-from litellm_updater.database import get_database_url
+import sys
+from pathlib import Path
+
+# Add project root to path for shared module imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from shared.db_models import Base
+from shared.database import get_database_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel" style="display: grid; gap: 1rem;">
+  <div style="display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+    <div class="stat-card">
+      <div class="stat-label">Providers</div>
+      <div class="stat-value">{{ stats.providers }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Models</div>
+      <div class="stat-value">{{ stats.models }}</div>
+    </div>
+    <div class="stat-card warning">
+      <div class="stat-label">Orphaned</div>
+      <div class="stat-value">{{ stats.orphaned }}</div>
+    </div>
+    <div class="stat-card info">
+      <div class="stat-label">Modified</div>
+      <div class="stat-value">{{ stats.modified }}</div>
+    </div>
+    <div class="stat-card success">
+      <div class="stat-label">LiteLLM Models</div>
+      <div class="stat-value">{{ stats.litellm_models }}</div>
+    </div>
+  </div>
+
+  <div class="status-grid">
+    <div>
+      <h3>LiteLLM Destination</h3>
+      {% if config.litellm.configured %}
+      <p><strong>{{ config.litellm.base_url }}</strong></p>
+      {% else %}
+      <p class="muted">Not configured. Set it in Admin to enable sync.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Sync</h3>
+      {% if config.sync_interval_seconds > 0 %}
+      <p>Every {{ config.sync_interval_seconds }} seconds</p>
+      {% else %}
+      <p class="muted">Automatic sync disabled</p>
+      {% endif %}
+      {% if last_synced %}
+      <p class="muted">Last synced at {{ last_synced }}</p>
+      {% else %}
+      <p class="muted">No sync completed yet</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Actions</h3>
+      <form action="/sync" method="post">
+        <button type="submit" class="btn-primary">Run sync now</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Providers</h2>
+  {% if config.sources %}
+  <div class="provider-grid">
+    {% for source in config.sources %}
+    <div class="provider-card">
+      <div class="provider-name">{{ source.name }}</div>
+      <div class="muted">{{ human_source_type(source.type) }} @ {{ source.base_url }}</div>
+      {% if source.prefix %}<div class="badge">Prefix: {{ source.prefix }}</div>{% endif %}
+      {% if source.tags and source.tags|length %}
+        <div class="tag-row">
+          {% for tag in source.tags[:4] %}
+            <span class="badge">#{{ tag }}</span>
+          {% endfor %}
+          {% if source.tags|length > 4 %}
+            <span class="badge muted">+{{ source.tags|length - 4 }}</span>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>No providers configured. Add them in Admin.</p>
+  {% endif %}
+</section>
+
+<style>
+.stat-card {
+  padding: 1rem;
+  border-radius: 8px;
+  background: #f5f7fb;
+  border: 1px solid #e4e7ef;
+}
+.stat-card .stat-label { font-size: 0.9rem; color: #6b7280; }
+.stat-card .stat-value { font-size: 2rem; font-weight: 700; }
+.stat-card.warning { background: #fff4f2; border-color: #ffccc2; }
+.stat-card.info { background: #f0f7ff; border-color: #cfe3ff; }
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  padding-top: 0.5rem;
+}
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.provider-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #fafafa;
+}
+.provider-name { font-weight: 700; margin-bottom: 0.25rem; }
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  background: #e0e7ff;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  margin-right: 0.25rem;
+}
+.badge.muted { background: #ededed; }
+.tag-row { margin-top: 0.35rem; }
+.btn-primary {
+  background: #1976d2;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+</style>
+{% endblock %}
