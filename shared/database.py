@@ -5,14 +5,12 @@ from typing import AsyncGenerator
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from alembic import command
-from alembic.config import Config
-from alembic.util.exc import CommandError
 import logging
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = Path("data/models.db")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_DB_PATH = BASE_DIR / "data" / "models.db"
 
 # Global session maker (initialized in lifespan)
 async_session_maker: async_sessionmaker[AsyncSession] | None = None
@@ -53,24 +51,9 @@ def create_engine(db_url: str | None = None) -> AsyncEngine:
     return engine
 
 
-def run_migrations(
-    db_url: str | None = None,
-    config_path: Path | str | None = None,
-    script_location: Path | str | None = None,
-) -> None:
-    """Apply alembic migrations up to head."""
-    import sqlite3
-
-    base_dir = Path(__file__).resolve().parent.parent
-    db_url = db_url or get_sync_database_url()
-    config_path = Path(config_path) if config_path else base_dir / "alembic.ini"
-    script_location = Path(script_location) if script_location else base_dir / "alembic"
-
-    alembic_config = Config(str(config_path))
-    alembic_config.set_main_option("script_location", str(script_location))
-    alembic_config.set_main_option("sqlalchemy.url", db_url)
-
-    command.upgrade(alembic_config, "head")
+def run_migrations(*args, **kwargs) -> None:
+    """No-op placeholder to keep backwards compatibility now that we bootstrap via metadata.create_all."""
+    logger.info("run_migrations skipped (using metadata.create_all + ensure_minimum_schema)")
 
 
 async def ensure_minimum_schema(engine: AsyncEngine) -> None:

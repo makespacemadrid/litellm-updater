@@ -9,8 +9,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from shared.database import create_engine, init_session_maker, run_migrations, get_database_url, get_sync_database_url
-from shared.database import ensure_minimum_schema
+from shared.database import create_engine, init_session_maker, ensure_minimum_schema, get_database_url
 from shared.crud import get_config, get_all_providers, get_provider_by_id
 from backend.provider_sync import sync_provider
 
@@ -42,20 +41,11 @@ class SyncWorker:
         """Initialize database connection."""
         logger.info("Initializing database...")
 
-        # Run migrations first (using sync URL for Alembic)
-        sync_db_url = get_sync_database_url()
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, run_migrations, sync_db_url)
-            logger.info("Database migrations applied")
-        except Exception as e:
-            logger.warning("Migration failed, will try to continue: %s", e)
-
         # Create engine and session maker (using async URL)
         async_db_url = get_database_url()
         self.engine = create_engine(async_db_url)
         self.session_maker = init_session_maker(self.engine)
-        # Ensure schema is up to date when alembic is not run (handles new check constraints)
+        # Ensure schema is up to date
         await ensure_minimum_schema(self.engine)
         logger.info("Database initialized")
 
