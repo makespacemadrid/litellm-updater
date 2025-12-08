@@ -1080,6 +1080,14 @@ def create_app() -> FastAPI:
         """Get all providers from database."""
         from .crud import get_all_providers
 
+        def _ensure_unique_tag(provider_name: str, model_id: str, tags: list[str]) -> list[str]:
+            """Make sure unique_id tag is present."""
+            normalized = [t.lower() for t in tags]
+            uid = f"unique_id:{provider_name}/{model_id}".lower()
+            if uid not in normalized:
+                tags.append(uid)
+            return tags
+
         providers = await get_all_providers(session)
         return [
             {
@@ -1815,6 +1823,7 @@ def create_app() -> FastAPI:
 
                         # Use compat model's tags
                         combined_tags = model.all_tags or ["lupdater", f"provider:{provider.name}", "type:compat"]
+                        combined_tags = _ensure_unique_tag(provider.name, model.model_id, combined_tags)
                         litellm_params["tags"] = combined_tags
 
                         # Use mapped model's metadata (effective_params)
@@ -1888,6 +1897,7 @@ def create_app() -> FastAPI:
                             provider_tags=provider.tags_list,
                             mode=ollama_mode,
                         )
+                    combined_tags = _ensure_unique_tag(provider.name, model.model_id, combined_tags)
 
                     litellm_params["tags"] = combined_tags
 
