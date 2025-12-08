@@ -36,6 +36,8 @@ def _coerce_pricing_dict(raw: dict[str, Any] | None) -> dict[str, float]:
         "input_cost_per_second",
         "output_cost_per_second",
         "output_cost_per_image",
+        "input_cost_per_character",
+        "output_cost_per_character",
     ):
         value = raw.get(key)
         if isinstance(value, (int, float)):

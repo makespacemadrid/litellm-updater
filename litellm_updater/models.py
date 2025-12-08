@@ -437,26 +437,36 @@ def _extract_tags(raw: dict) -> list[str]:
 
 
 def _get_default_pricing(model_type: str | None, mode: str | None) -> dict[str, Any]:
-    """Get default pricing based on OpenAI GPT-4, Whisper, and DALL-E 3.
+    """Get default pricing using OpenAI-style fields for chat, audio, and images.
 
     Pricing reference (2025):
     - GPT-4: $0.00003/token input, $0.00006/token output
-    - Whisper: $0.0001/second
+    - Whisper: $0.0001/second (audio transcription)
+    - TTS (gpt-4o-mini-tts): $0.000015/character input
     - DALL-E 3: $0.08/image (average)
     """
 
     pricing: dict[str, Any] = {}
 
-    # Determine if this is an audio transcription model
-    if mode == "audio_transcription" or (model_type and "audio" in model_type.lower()):
+    lower_mode = (mode or "").lower() if mode else None
+    lower_type = (model_type or "").lower() if model_type else ""
+
+    # Audio transcription (Whisper)
+    if lower_mode == "audio_transcription" or "audio_transcription" in lower_type or "whisper" in lower_type:
         # Whisper pricing: $0.006 per minute = $0.0001 per second
         pricing["input_cost_per_second"] = 0.0001
         pricing["output_cost_per_second"] = 0.0
         return pricing
 
+    # Text-to-speech (audio_speech)
+    if lower_mode == "audio_speech" or "tts" in lower_type or "speech" in lower_type:
+        # TTS pricing: $15 per 1M characters = $0.000015 per character
+        pricing["input_cost_per_character"] = 0.000015
+        return pricing
+
     # Determine if this is an image generation model
-    if model_type and any(
-        keyword in model_type.lower() for keyword in ["image", "dall-e", "dalle", "vision-gen"]
+    if lower_type and any(
+        keyword in lower_type for keyword in ["image", "dall-e", "dalle", "vision-gen"]
     ):
         # DALL-E 3 average pricing: $0.08 per image
         pricing["output_cost_per_image"] = 0.08
