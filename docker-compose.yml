@@ -14,12 +14,6 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     networks:
       - litellm
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 256M
     labels:
       com.centurylinklabs.watchtower.enable: "true"
 
@@ -29,6 +23,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: uvicorn frontend.api:create_app --factory --host 0.0.0.0 --port 8000
     container_name: model-updater-web
     restart: unless-stopped
     ports:
@@ -41,12 +36,6 @@ services:
       - model-updater-backend
     networks:
       - litellm
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-        reservations:
-          memory: 128M
     labels:
       com.centurylinklabs.watchtower.enable: "true"
 

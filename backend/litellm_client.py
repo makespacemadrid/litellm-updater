@@ -113,13 +113,14 @@ async def reconcile_litellm_models(session, config, provider, models, remove_orp
                         provider,
                         model,
                         config=config,
+                        session=session,
                     )
                     stats["added"] += 1
                     logger.info("Added model %s to LiteLLM", model.model_id)
                 else:
                     # Model exists, check if update needed
                     litellm_model = litellm_index[unique_id_tag]
-                    if _needs_update(provider, model, litellm_model, config=config):
+                    if await _needs_update(provider, model, litellm_model, config=config, session=session):
                         await update_model_in_litellm(
                             client,
                             config.litellm_base_url,
@@ -128,6 +129,7 @@ async def reconcile_litellm_models(session, config, provider, models, remove_orp
                             model,
                             litellm_model,
                             config=config,
+                            session=session,
                         )
                         stats["updated"] += 1
                         logger.info("Updated model %s in LiteLLM", model.model_id)
@@ -184,10 +186,11 @@ async def push_model_to_litellm(
     provider,
     model,
     config=None,
+    session=None,
 ):
     """Push a single model to LiteLLM."""
     # Build litellm_params
-    litellm_params = _build_litellm_params(provider, model)
+    litellm_params = await _build_litellm_params(provider, model, session)
 
     # Build model_info with pricing overrides
     model_info = apply_pricing_overrides(
@@ -257,6 +260,7 @@ async def update_model_in_litellm(
     model,
     litellm_model,
     config=None,
+    session=None,
 ):
     """Update an existing model in LiteLLM."""
     # First delete the old model
@@ -268,7 +272,7 @@ async def update_model_in_litellm(
     await delete_model_from_litellm(client, base_url, api_key, model_id)
 
     # Then create the new version
-    await push_model_to_litellm(client, base_url, api_key, provider, model, config=config)
+    await push_model_to_litellm(client, base_url, api_key, provider, model, config=config, session=session)
 
 
 async def delete_model_from_litellm(client: httpx.AsyncClient, base_url: str, api_key: str | None, model_id: str):
@@ -282,7 +286,7 @@ async def delete_model_from_litellm(client: httpx.AsyncClient, base_url: str, ap
     response.raise_for_status()
 
 
-def _needs_update(provider, model, litellm_model, config=None) -> bool:
+async def _needs_update(provider, model, litellm_model, config=None, session=None) -> bool:
     """
     Check if a model in LiteLLM needs to be updated based on database model.
 
@@ -290,7 +294,7 @@ def _needs_update(provider, model, litellm_model, config=None) -> bool:
     """
     # Get current values from database model
     db_display_name = model.get_display_name(apply_prefix=True)
-    db_params = _build_litellm_params(provider, model)
+    db_params = await _build_litellm_params(provider, model, session)
     db_model_str = db_params.get('model', '')
     db_api_base = db_params.get('api_base', '')
 
@@ -338,7 +342,7 @@ def _needs_update(provider, model, litellm_model, config=None) -> bool:
     return False
 
 
-def _build_litellm_params(provider, model) -> dict:
+async def _build_litellm_params(provider, model, session=None) -> dict:
     """Build litellm_params for a model."""
     litellm_params = {}
     model_id = model.model_id
@@ -363,7 +367,51 @@ def _build_litellm_params(provider, model) -> dict:
             litellm_params["model"] = f"ollama_chat/{model_id}"
             litellm_params["api_base"] = provider.base_url
     elif provider.type == "compat":
-        # Compat models use model_id as-is
-        litellm_params["model"] = model_id
+        # Compat models need to resolve their mapping to the actual provider/model
+        if not session:
+            logger.warning("No session provided for compat model, using model_id as-is")
+            litellm_params["model"] = model_id
+        else:
+            # Get the mapped provider and model
+            from shared.crud import get_provider_by_id, get_model_by_provider_and_name
+
+            if not model.mapped_provider_id or not model.mapped_model_id:
+                logger.warning(f"Compat model {model_id} missing mapping, using model_id as-is")
+                litellm_params["model"] = model_id
+            else:
+                mapped_provider = await get_provider_by_id(session, model.mapped_provider_id)
+                if not mapped_provider:
+                    logger.warning(f"Mapped provider {model.mapped_provider_id} not found for compat model {model_id}")
+                    litellm_params["model"] = model_id
+                else:
+                    # Get the mapped model to determine ollama_mode
+                    mapped_model = await get_model_by_provider_and_name(session, model.mapped_provider_id, model.mapped_model_id)
+                    mapped_ollama_mode = (
+                        (mapped_model.ollama_mode if mapped_model else None) or
+                        mapped_provider.default_ollama_mode or
+                        "ollama_chat"
+                    )
+
+                    # Build params based on mapped provider type
+                    if mapped_provider.type == "openai":
+                        litellm_params["model"] = f"openai/{model.mapped_model_id}"
+                        litellm_params["api_base"] = mapped_provider.base_url
+                        litellm_params["api_key"] = mapped_provider.api_key or "sk-1234"
+                    elif mapped_provider.type == "ollama":
+                        if mapped_ollama_mode == "openai":
+                            litellm_params["model"] = f"openai/{model.mapped_model_id}"
+                            api_base = mapped_provider.base_url.rstrip("/")
+                            litellm_params["api_base"] = f"{api_base}/v1"
+                            litellm_params["api_key"] = mapped_provider.api_key or "sk-1234"
+                        elif mapped_ollama_mode == "ollama":
+                            litellm_params["model"] = f"ollama/{model.mapped_model_id}"
+                            litellm_params["api_base"] = mapped_provider.base_url
+                        else:
+                            # Use ollama_chat as the preferred default
+                            litellm_params["model"] = f"ollama_chat/{model.mapped_model_id}"
+                            litellm_params["api_base"] = mapped_provider.base_url
+                    else:
+                        logger.warning(f"Unsupported mapped provider type {mapped_provider.type} for compat model {model_id}")
+                        litellm_params["model"] = model_id
 
     return litellm_params

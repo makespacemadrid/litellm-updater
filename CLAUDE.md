@@ -4,22 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LiteLLM Updater now runs as two FastAPI services built from shared code:
+LiteLLM Updater runs as two FastAPI services built from shared code:
 - `backend/` → headless sync worker (`backend/sync_worker.py`) that fetches provider models and can push them into LiteLLM on a schedule.
 - `frontend/` → UI + API (`frontend/api.py`) for manual fetch/push/sync and CRUD over providers/models.
 
 Data lives in `./data/models.db` (SQLite) mounted into both services. Docker Compose also brings up LiteLLM (`http://localhost:4000`, API key `sk-1234` by default) and the UI on `http://localhost:4001`.
 
 ## Terminology (keep consistent in UI + API)
-- Fetch: only pull models from providers into the local database.
-- Push: send database models to LiteLLM (deduped, no new fetch).
-- Sync: fetch + push in one operation.
+- **Fetch**: only pull models from providers into the local database.
+- **Push**: send database models to LiteLLM (deduped, no new fetch).
+- **Sync**: fetch + push in one operation.
 
-## Current layout
+## Current Layout
 - `shared/`: database models/CRUD, source fetchers, normalization, tags, and config helpers shared by both services.
 - `backend/`: provider sync pipeline, LiteLLM client, and the scheduler entrypoint (`python -m backend.sync_worker`).
 - `frontend/`: FastAPI UI, templates, and the provider/model routes that call into `backend.provider_sync`.
-- `litellm_updater/`: legacy entrypoint kept for compatibility; most logic now lives under `shared/` + `backend/`.
 
 ## Development Commands
 
@@ -32,13 +31,30 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
-### Running the service
-```bash
-# Using the CLI entrypoint
-PORT=8000 litellm-updater
+### Running Services Locally
 
-# Or using uvicorn directly
-PORT=8000 uvicorn litellm_updater.web:create_app --host 0.0.0.0 --port $PORT
+**Frontend (development):**
+```bash
+PORT=8000 uvicorn frontend.api:create_app --factory --host 0.0.0.0 --port 8000 --reload
+```
+
+**Backend worker (development):**
+```bash
+python -m backend.sync_worker
+```
+
+### Docker Deployment
+
+```bash
+# Build images
+docker compose build --no-cache model-updater-backend model-updater-web
+
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f model-updater-web
+docker compose logs -f model-updater-backend
 ```
 
 ### Testing
@@ -54,15 +70,6 @@ cp tests/example.env tests/.env
 # Edit tests/.env with TEST_OLLAMA_URL, TEST_OPENAI_URL and optional API keys
 ```
 
-### Docker
-```bash
-
-# Using docker-compose
-cp example.env .env
-docker compose --env-file .env build --no-cache model-updater-backend model-updater-web
-docker compose --env-file .env up -d
-```
-
 ### Linting
 ```bash
 # Run ruff for linting/formatting
@@ -73,11 +80,13 @@ ruff format .
 ## Deployment & Live Testing
 
 Compose brings up:
-- `model-updater-backend`: sync worker (no HTTP).
-- `model-updater-web`: UI/API on `http://localhost:4001`.
+- `model-updater-backend`: sync worker (no HTTP). Runs `python -m backend.sync_worker`.
+- `model-updater-web`: UI/API on `http://localhost:4001`. Runs `frontend.api:create_app` via uvicorn.
 - `litellm`: target proxy on `http://localhost:4000` (`Authorization: Bearer sk-1234`).
 - `db`: Postgres backing LiteLLM.
 - `watchtower`: optional image updater (labelled).
+
+**IMPORTANT:** The `model-updater-web` service MUST use `command: uvicorn frontend.api:create_app --factory --host 0.0.0.0 --port 8000` in docker-compose.yml to run the correct application.
 
 Rebuild + relaunch after code changes:
 ```bash
@@ -88,14 +97,15 @@ docker compose up -d
 Quick checks:
 ```bash
 docker compose ps
-curl -s http://localhost:4001/health
+curl -s http://localhost:4001/sources  # Check if UI is accessible
 curl -s -H "Authorization: Bearer sk-1234" http://localhost:4000/health/liveliness
 docker compose logs --tail=50 model-updater-web
 docker compose logs --tail=50 model-updater-backend
 ```
 
-## Operational notes
-- Fetch = load models from providers into the database, Push = register existing DB models into LiteLLM, Sync = fetch + push. UI buttons and routes follow this naming (`/api/providers/fetch-all`, `/api/providers/sync-all`, per-provider Fetch/Sync/Push).
+## Operational Notes
+- Fetch = load models from providers into the database, Push = register existing DB models into LiteLLM, Sync = fetch + push.
+- UI buttons and routes follow this naming: `/api/providers/fetch-all`, `/api/providers/sync-all`, per-provider Fetch/Sync/Push.
 - LiteLLM pushes dedupe by lowercasing `unique_id` and pruning duplicates before registration; per-provider Push and Push All avoid re-adding existing models.
 - Ollama details: by default only `/api/tags` is fetched. Set `FETCH_OLLAMA_DETAILS=true` to pull `/api/show` per model; heavy fields (tensors/modelfile/license/etc.) are stripped before storing to keep memory usage low.
 
@@ -139,7 +149,7 @@ docker compose logs --tail=50 model-updater-backend
 **Synchronization** (`backend/provider_sync.py`, `backend/sync_worker.py`)
 - `sync_provider()` handles fetch + DB upsert + optional LiteLLM push. Uses `_clean_ollama_payload` for heavy models and honors `push_to_litellm` flag.
 - `sync_worker.py` schedules periodic syncs using provider defaults (`sync_enabled` flag + interval from config).
-- Manual UI endpoints call into the same `sync_provider` with explicit fetch/push/sync semantics.
+- Manual UI endpoints in `frontend/api.py` call into `backend.provider_sync` with explicit fetch/push/sync semantics.
 
 **LiteLLM Integration** (`backend/litellm_client.py`)
 - Model registration: `POST /model/new` with `{model_name, litellm_params, model_info}`
@@ -149,10 +159,10 @@ docker compose logs --tail=50 model-updater-backend
 - Model listing: `GET /model/info` returns complete model data including database UUIDs
 
 **Web Layer** (`frontend/api.py` + `frontend/templates/`)
-- FastAPI UI surfaced on `:4001` via Docker.
+- FastAPI application served on `:4001` via Docker.
 - Database initialization in lifespan context manager (uses `shared/database.init_session_maker` + migrations).
 - Provider/model routes wrap `backend.provider_sync` for fetch/push/sync actions and expose per-provider + global buttons in `/sources`.
-- Admin page uses modal dialogs for add/edit provider.
+- Admin page at `/admin` uses modal dialogs for add/edit provider.
 
 **Provider Management API:**
   - `GET /api/providers` - List all providers from database
@@ -167,19 +177,20 @@ docker compose logs --tail=50 model-updater-backend
 
 **Model Management API:**
   - `GET /api/providers/{id}/models` - Get models for provider (with orphan filtering)
-  - `GET /api/models/db/{id}` - Get specific model by database ID
-  - `POST /api/models/db/{id}/params` - Update model user parameters
-  - `DELETE /api/models/db/{id}/params` - Reset to provider defaults
-  - `POST /api/models/db/{id}/refresh` - Refresh single model from provider
-  - `POST /api/models/db/{id}/push` - Push single model to LiteLLM with effective params
+  - `GET /api/models/{id}` - Get specific model by database ID
+  - `PATCH /api/models/{id}/params` - Update model user parameters
+  - `DELETE /api/models/{id}/params` - Reset to provider defaults
+  - `POST /api/models/{id}/refresh` - Refresh single model from provider
+  - `POST /api/models/{id}/push` - Push single model to LiteLLM with effective params
   - `POST /api/models/push-all` - Push all non-orphaned models to LiteLLM
+  - `POST /api/models/db/reset-all` - Delete all models from database
 
-**Legacy/Compatibility API:**
-  - `POST /sync` - Manual sync trigger (uses database session)
-  - `/models/show?source=X&model=Y` - Fetch Ollama model details on demand
-  - `/api/sources`, `/api/models` - JSON APIs (SyncState-based)
-
-> The flows below describe the legacy `litellm_updater` entrypoint. The Docker services now route through `backend/provider_sync.py` and `frontend/api.py`, but the database behaviors (upserts, orphan handling, effective params) remain the same.
+**Compatibility Models API:**
+  - `GET /api/compat/models` - List all compat models
+  - `POST /api/compat/models` - Create new compat model mapping
+  - `PUT /api/compat/models/{id}` - Update compat model
+  - `DELETE /api/compat/models/{id}` - Delete compat model
+  - `POST /api/compat/register-defaults` - Register default OpenAI model mappings
 
 ### Key Data Flow
 
@@ -187,33 +198,39 @@ docker compose logs --tail=50 model-updater-backend
 1. User adds providers in `/admin` (stored in database)
 
 **Synchronization Flow:**
-1. Scheduler (or manual `/sync` trigger) calls `sync_once()` with database session
+1. Backend worker or manual trigger calls `sync_provider()` from `backend/provider_sync.py`
 2. For each provider:
    - `fetch_source_models()` retrieves raw model list from provider
    - Each raw model is normalized via `ModelMetadata.from_raw()`
    - `upsert_model()` creates or updates model in database
    - User-edited parameters (`user_params`) are preserved during update
    - Models not in fetch are marked as `is_orphaned = True`
-   - If LiteLLM configured, models are POSTed to `/model/new`
-3. Results also stored in `SyncState` for backward compatibility
+   - If LiteLLM configured and `push_to_litellm=True`, models are POSTed to `/model/new`
 
 **Model Management Flow:**
 1. User views providers/models at `/sources` (loads from database via API)
 2. Orphaned models displayed in RED, modified models in BLUE
-3. Per-model actions:
-   - **Refresh**: Fetches latest data from provider, updates database with `full_update=True`
-   - **Edit Params**: Updates `user_params` (preserved across syncs), sets `user_modified=True`
-   - **Push to LiteLLM**: Sends single model with `effective_params` and proper tags
-4. Bulk actions:
+3. Per-provider actions:
+   - **Fetch**: Fetches models from provider into database (no LiteLLM push)
+   - **Sync**: Fetches models from provider + pushes to LiteLLM
+   - **Push**: Pushes existing database models to LiteLLM (no fetch)
+4. Per-model actions:
+   - **Configure**: Opens modal to edit parameters, tags, pricing, sync settings
+   - **Refresh from Provider**: Fetches latest data from provider, updates database with `full_update=True`
+   - **Save & Push to LiteLLM**: Saves config and immediately pushes to LiteLLM
+   - **Delete**: Removes model from database
+5. Global actions:
+   - **Fetch All Providers**: Fetches all enabled providers into database
+   - **Sync All Providers**: Fetches + pushes all enabled providers
    - **Push All to LiteLLM**: Pushes all non-orphaned models with tags (`lupdater`, `provider:*`, `type:*`)
-   - **Sync All Providers**: Fetches models from all providers, updates database with `full_update=False`
-5. LiteLLM page at `/litellm` shows models with tag filtering:
+   - **Reset Model Database**: Deletes all models from database
+6. LiteLLM page at `/litellm` shows models with tag filtering:
    - Click tag buttons to filter models by tags (OR logic for multiple tags)
    - Tags include: `lupdater`, `provider:<name>`, `type:<ollama|litellm>`
 
 **Database Schema:**
-- **Providers**: id, name, base_url, type, prefix, default_ollama_mode, api_key
-- **Models**: id, provider_id, model_id, litellm_params, user_params, is_orphaned, user_modified, first_seen, last_seen
+- **Providers**: id, name, base_url, type, prefix, default_ollama_mode, api_key, sync_enabled
+- **Models**: id, provider_id, model_id, litellm_params, user_params, is_orphaned, user_modified, sync_enabled, tags, pricing, first_seen, last_seen
 
 ### Important Patterns
 
@@ -312,7 +329,7 @@ model_info = {
 **Ollama Payload Cleaning**
 - The `/api/show` endpoint returns very large responses (tensors, full modelfile)
 - Always use `_clean_ollama_payload()` before storing/caching Ollama responses
-- Cleaned payload is used in `ModelDetailsCache` and returned by `/models/show`
+- Cleaned payload is used in `ModelDetailsCache` and returned by API
 
 **URL Normalization**
 - All URLs stored as Pydantic `HttpUrl` type
@@ -320,26 +337,24 @@ model_info = {
 - Don't manually strip slashes; use the property
 
 **Thread Safety**
-- `SyncState` and `ModelDetailsCache` use asyncio locks (`asyncio.Lock()`)
-- Always use `async with self._lock` pattern when accessing/modifying shared state
 - Database sessions are async-safe via SQLAlchemy async engine
+- Use proper async/await patterns throughout
 
 ## Configuration Notes
 
-**NEW: Providers are now in the database!**
+**Providers are managed in the database**
 
-The `data/config.json` schema (reduced):
+The `data/config.json` schema (minimal):
 ```json
 {
   "litellm": {"base_url": "http://localhost:4000", "api_key": null},
-  "sources": [],
   "sync_interval_seconds": 300
 }
 ```
 
 - `sync_interval_seconds`: 0 = disabled, minimum 30 when enabled
 - `litellm.base_url`: Can be null to disable LiteLLM registration (still fetches models)
-- **`sources` array is legacy** - providers are now managed in database
+- Providers are managed in database, not config file
 
 **Database Schema (`data/models.db`):**
 
@@ -349,10 +364,11 @@ CREATE TABLE providers (
     id INTEGER PRIMARY KEY,
     name VARCHAR UNIQUE NOT NULL,
     base_url VARCHAR NOT NULL,
-    type VARCHAR NOT NULL,  -- 'ollama' or 'litellm'
+    type VARCHAR NOT NULL,  -- 'ollama', 'litellm', or 'compat'
     api_key VARCHAR,
     prefix VARCHAR,  -- e.g., 'mks-ollama'
     default_ollama_mode VARCHAR,  -- 'ollama' or 'openai'
+    sync_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 );
@@ -373,7 +389,12 @@ CREATE TABLE models (
     litellm_params TEXT NOT NULL,  -- JSON object (provider defaults)
     raw_metadata TEXT NOT NULL,  -- JSON object (full raw response)
     user_params TEXT,  -- JSON object (user edits)
+    user_tags TEXT,  -- JSON array (user-defined tags)
     ollama_mode VARCHAR,  -- Per-model override
+    sync_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    pricing_profile VARCHAR,  -- e.g., 'gpt-4o', 'whisper-1'
+    pricing_override TEXT,  -- JSON object {input_cost_per_token, output_cost_per_token}
+    access_groups TEXT,  -- JSON array (for LiteLLM access control)
     first_seen DATETIME NOT NULL,
     last_seen DATETIME NOT NULL,
     is_orphaned BOOLEAN NOT NULL DEFAULT FALSE,
@@ -382,6 +403,19 @@ CREATE TABLE models (
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     UNIQUE(provider_id, model_id)
+);
+```
+
+Compat Models table:
+```sql
+CREATE TABLE compat_models (
+    id INTEGER PRIMARY KEY,
+    model_name VARCHAR UNIQUE NOT NULL,  -- e.g., 'gpt-4', 'gpt-3.5-turbo'
+    mapped_provider_id INTEGER REFERENCES providers(id) ON DELETE CASCADE,
+    mapped_model_id VARCHAR,  -- model_id in the models table
+    access_groups TEXT,  -- JSON array
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
 );
 ```
 
@@ -397,7 +431,7 @@ CREATE TABLE models (
 
 **Via API:**
 ```bash
-curl -X POST http://localhost:8000/admin/providers \
+curl -X POST http://localhost:4001/admin/providers \
   -F "name=my-ollama" \
   -F "base_url=http://localhost:11434" \
   -F "type=ollama" \
@@ -409,24 +443,24 @@ curl -X POST http://localhost:8000/admin/providers \
 
 **Refresh Single Model:**
 ```bash
-curl -X POST http://localhost:8000/api/models/db/123/refresh
+curl -X POST http://localhost:4001/api/models/123/refresh
 ```
 
 **Edit Model Parameters:**
 ```bash
-curl -X POST http://localhost:8000/api/models/db/123/params \
+curl -X PATCH http://localhost:4001/api/models/123/params \
   -H "Content-Type: application/json" \
-  -d '{"max_tokens": 4096, "temperature": 0.7}'
+  -d '{"params": {"max_tokens": 4096}, "tags": ["production", "gpu"]}'
 ```
 
 **Push to LiteLLM:**
 ```bash
-curl -X POST http://localhost:8000/api/models/db/123/push
+curl -X POST http://localhost:4001/api/models/123/push
 ```
 
 **Reset to Defaults:**
 ```bash
-curl -X DELETE http://localhost:8000/api/models/db/123/params
+curl -X DELETE http://localhost:4001/api/models/123/params
 ```
 
 ## Testing Strategy
@@ -440,11 +474,6 @@ curl -X DELETE http://localhost:8000/api/models/db/123/params
 - Uses `pytest-asyncio` for async test support
 - Tests skip when endpoints not configured (graceful degradation)
 
-**Database Testing:**
-- All new database functionality has been manually tested
-- Tested: Provider CRUD, model persistence, orphan detection
-- See commit history for test results
-
 **Manual Testing Workflow:**
 ```bash
 # 1. Install dependencies
@@ -453,17 +482,18 @@ pip install -e .
 # 2. Run unit tests
 pytest tests/test_model_details_cache.py tests/test_ollama_payload_cleaning.py -v
 
-# 3. Test API endpoints
-curl http://localhost:8000/api/providers
-curl http://localhost:8000/api/providers/1/models
+# 3. Start services
+docker compose up -d
 
-# 4. Test model management
-# Use UI at /sources to refresh, edit, and push models
+# 4. Test via UI
+open http://localhost:4001/sources
 ```
 
 ## Recent Changes & Gotchas
+- The **frontend service must run `frontend.api:create_app`** (not the legacy `litellm_updater.web`). This is configured via `command:` in docker-compose.yml.
 - Ollama `/api/tags` responses that return a bare list (instead of `{ "models": [...] }`) are now parsed correctly; this fixes empty syncs from some servers.
 - `mode:*` tags are only generated for Ollama providers. OpenAI/compat providers should no longer get `mode:ollama` attached to their models.
 - Duplicate detection when pushing to LiteLLM now reads tags from both `litellm_params` and `model_info`, so older LiteLLM entries without top-level tags are still de-duped.
-- The Providers page uses a **Fetch** button that runs even if sync is disabled for that provider; the sync flag only controls scheduled syncs.
+- The Providers page shows **Fetch**, **Sync**, and **Push** buttons for each provider. The sync flag only controls scheduled syncs from the backend worker.
 - On the Admin page, adding and editing providers happen in modals; the inline add form is gone.
+- Compat models page loads models from all available providers (filtered to exclude type='compat'), not just a hardcoded provider.
