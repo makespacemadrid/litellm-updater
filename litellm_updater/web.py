@@ -28,6 +28,7 @@ from .database import (
     create_engine,
     ensure_minimum_schema,
     get_database_url,
+    get_sync_database_url,
     get_session,
     async_session_maker,
     init_session_maker,
