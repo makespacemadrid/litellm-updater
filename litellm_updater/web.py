@@ -1701,6 +1701,7 @@ def create_app() -> FastAPI:
 
         # Fetch existing models from LiteLLM to avoid duplicates
         existing_unique_ids = set()
+        existing_names: dict[str, str] = {}
         try:
             litellm_models = await fetch_litellm_target_models(
                 LitellmDestination(base_url=config.litellm.base_url, api_key=config.litellm.api_key)
@@ -1710,6 +1711,12 @@ def create_app() -> FastAPI:
                 if isinstance(m.raw, dict):
                     combined_tags.update(m.raw.get("litellm_params", {}).get("tags", []) or [])
                     combined_tags.update(m.raw.get("model_info", {}).get("tags", []) or [])
+                    # Keep a mapping of model_name -> UUID for replacement when unique_id is missing
+                    model_info = m.raw.get("model_info") or {}
+                    if isinstance(model_info, dict):
+                        model_uuid = model_info.get("id")
+                        if model_uuid:
+                            existing_names[m.id.lower()] = model_uuid
                 unique_id_tag = next((t for t in combined_tags if isinstance(t, str) and t.startswith("unique_id:")), None)
                 if unique_id_tag:
                     # Normalize to lowercase for case-insensitive comparison
@@ -1750,6 +1757,21 @@ def create_app() -> FastAPI:
                     results["skipped"] += 1
                     logger.info("Skipping duplicate model %s (already in LiteLLM)", model.model_id)
                     continue
+                # If the model name already exists but is missing unique_id, replace it to inject tags
+                lower_display_name = display_name.lower()
+                if lower_display_name in existing_names:
+                    existing_id = existing_names[lower_display_name]
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            await _delete_model_from_litellm(
+                                client,
+                                config.litellm.normalized_base_url,
+                                config.litellm.api_key,
+                                existing_id,
+                            )
+                        logger.info("Replaced existing LiteLLM model without unique_id: %s", display_name)
+                    except Exception as exc:  # pragma: no cover - network dependent
+                        logger.warning("Failed to replace existing model %s: %s", display_name, exc)
 
                 # For compat models, inherit properties from mapped model
                 if provider.type == "compat" and model.mapped_provider_id and model.mapped_model_id:
