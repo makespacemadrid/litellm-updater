@@ -19,10 +19,10 @@ jobs:
         id: version
         run: |
           VERSION=$(python - <<'PY'
-import tomllib
-data = tomllib.load(open("pyproject.toml", "rb"))
-print(data["project"]["version"])
-PY
+            import tomllib
+            data = tomllib.load(open("pyproject.toml", "rb"))
+            print(data["project"]["version"])
+          PY
           )
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
