@@ -1,0 +1,503 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Models Browser</h2>
+  <p class="muted">
+    Search and filter models across all providers
+  </p>
+
+  <!-- Search and Filters -->
+  <div class="filters-panel">
+    <div class="search-box">
+      <input type="text" id="search-input" placeholder="Search by model name..." />
+    </div>
+
+    <div class="filters-grid">
+      <!-- Category Filter -->
+      <div class="filter-group">
+        <label>Category</label>
+        <select id="filter-category" multiple size="5">
+          <option value="">All</option>
+          <option value="chat">💬 Chat</option>
+          <option value="vision">👁️ Vision</option>
+          <option value="code">💻 Code</option>
+          <option value="reasoning">🧠 Reasoning</option>
+          <option value="embedding">🔢 Embedding</option>
+          <option value="audio">🎤 Audio</option>
+          <option value="image">🎨 Image</option>
+        </select>
+      </div>
+
+      <!-- Provider Filter -->
+      <div class="filter-group">
+        <label>Provider</label>
+        <select id="filter-provider" multiple size="5">
+          <option value="">All</option>
+        </select>
+      </div>
+
+      <!-- Context Window Filter -->
+      <div class="filter-group">
+        <label>Context Window</label>
+        <select id="filter-context">
+          <option value="">All</option>
+          <option value="0-4096">0 - 4K</option>
+          <option value="4097-8192">4K - 8K</option>
+          <option value="8193-16384">8K - 16K</option>
+          <option value="16385-32768">16K - 32K</option>
+          <option value="32769-65536">32K - 64K</option>
+          <option value="65537-131072">64K - 128K</option>
+          <option value="131073-999999999">128K+</option>
+        </select>
+      </div>
+
+      <!-- Capabilities Filter -->
+      <div class="filter-group">
+        <label>Capabilities</label>
+        <div class="checkbox-group">
+          <label><input type="checkbox" value="vision" class="cap-checkbox" /> Vision</label>
+          <label><input type="checkbox" value="function calling" class="cap-checkbox" /> Function Calling</label>
+          <label><input type="checkbox" value="tools" class="cap-checkbox" /> Tools</label>
+          <label><input type="checkbox" value="thinking" class="cap-checkbox" /> Thinking</label>
+          <label><input type="checkbox" value="embedding" class="cap-checkbox" /> Embedding</label>
+          <label><input type="checkbox" value="audio" class="cap-checkbox" /> Audio</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="filter-actions">
+      <button class="btn-primary" onclick="applyFilters()">Apply Filters</button>
+      <button class="btn-secondary" onclick="clearFilters()">Clear All</button>
+      <label class="toggle-label">
+        <input type="checkbox" id="hide-orphaned" checked />
+        <span>Hide Orphaned</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Results Summary -->
+  <div class="results-summary">
+    <span id="results-count">Loading...</span>
+  </div>
+
+  <!-- Models Grid -->
+  <div id="models-grid" class="models-grid">
+    Loading models...
+  </div>
+</section>
+
+<style>
+.filters-panel {
+  background: #f9f9f9;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.search-box {
+  margin-bottom: 1rem;
+}
+
+.search-box input {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+
+.search-box input:focus {
+  outline: none;
+  border-color: #1976d2;
+}
+
+.filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.filter-group label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #333;
+}
+
+.filter-group select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+}
+
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding-top: 1rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.results-summary {
+  padding: 0.75rem 1rem;
+  background: #f0f7ff;
+  border-left: 3px solid #1976d2;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  font-weight: 500;
+}
+
+.models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.model-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s;
+}
+
+.model-card:hover {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  transform: translateY(-2px);
+}
+
+.model-card.orphaned {
+  background: #ffebee;
+  border-color: #d32f2f;
+  opacity: 0.7;
+}
+
+.model-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: 0.75rem;
+}
+
+.model-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #1976d2;
+  word-break: break-word;
+}
+
+.model-card.orphaned .model-name {
+  color: #d32f2f;
+}
+
+.model-category {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.model-provider {
+  color: #666;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.model-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.meta-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  background: #f0f7ff;
+  border: 1px solid #cfe3ff;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  color: #1976d2;
+  font-weight: 500;
+}
+
+.capabilities-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+
+.cap-badge {
+  padding: 0.2rem 0.5rem;
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  color: #2e7d32;
+}
+
+.btn-primary {
+  background: #1976d2;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.btn-primary:hover {
+  background: #1565c0;
+}
+
+.btn-secondary {
+  background: #757575;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.btn-secondary:hover {
+  background: #616161;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  margin-left: auto;
+}
+</style>
+
+<script>
+let allModels = [];
+let filteredModels = [];
+let providers = [];
+
+// Category icons
+const categoryIcons = {
+  chat: '💬',
+  vision: '👁️',
+  code: '💻',
+  reasoning: '🧠',
+  embedding: '🔢',
+  audio: '🎤',
+  image: '🎨',
+  unknown: '❓'
+};
+
+async function loadData() {
+  try {
+    // Load providers
+    const providersResp = await fetch('/api/providers');
+    providers = await providersResp.json();
+
+    // Populate provider filter
+    const providerSelect = document.getElementById('filter-provider');
+    providers.forEach(p => {
+      if (p.type !== 'compat') {
+        const option = document.createElement('option');
+        option.value = p.id;
+        option.textContent = p.name;
+        providerSelect.appendChild(option);
+      }
+    });
+
+    // Load all models from all providers
+    allModels = [];
+    for (const provider of providers) {
+      if (provider.type === 'compat') continue;
+
+      const response = await fetch(`/api/providers/${provider.id}/models?include_orphaned=true`);
+      const data = await response.json();
+      const models = Array.isArray(data) ? data : (data.models || []);
+
+      // Add provider info to each model
+      models.forEach(m => {
+        m.provider_name = provider.name;
+        m.provider_id = provider.id;
+      });
+
+      allModels.push(...models);
+    }
+
+    // Get categories for each model
+    await categorizeModels();
+
+    // Apply initial filters
+    applyFilters();
+  } catch (error) {
+    document.getElementById('models-grid').innerHTML = `<p style="color: red;">Error loading models: ${error.message}</p>`;
+  }
+}
+
+async function categorizeModels() {
+  // Use the categorization endpoint to get categories
+  for (const model of allModels) {
+    // Simple categorization based on capabilities
+    const caps = model.capabilities || [];
+    const capsLower = caps.map(c => c.toLowerCase());
+
+    if (capsLower.includes('vision')) {
+      model.category = 'vision';
+    } else if (capsLower.includes('embedding')) {
+      model.category = 'embedding';
+    } else if (capsLower.includes('audio')) {
+      model.category = 'audio';
+    } else if (capsLower.includes('thinking')) {
+      model.category = 'reasoning';
+    } else if (model.model_id.toLowerCase().includes('coder') || model.model_id.toLowerCase().includes('code')) {
+      model.category = 'code';
+    } else if (capsLower.some(c => ['chat', 'completion', 'tools', 'function calling'].includes(c))) {
+      model.category = 'chat';
+    } else {
+      model.category = 'unknown';
+    }
+  }
+}
+
+function applyFilters() {
+  const searchTerm = document.getElementById('search-input').value.toLowerCase();
+  const selectedCategories = Array.from(document.getElementById('filter-category').selectedOptions).map(o => o.value).filter(v => v);
+  const selectedProviders = Array.from(document.getElementById('filter-provider').selectedOptions).map(o => o.value).filter(v => v);
+  const contextRange = document.getElementById('filter-context').value;
+  const selectedCaps = Array.from(document.querySelectorAll('.cap-checkbox:checked')).map(cb => cb.value);
+  const hideOrphaned = document.getElementById('hide-orphaned').checked;
+
+  filteredModels = allModels.filter(model => {
+    // Search filter
+    if (searchTerm && !model.model_id.toLowerCase().includes(searchTerm)) {
+      return false;
+    }
+
+    // Category filter
+    if (selectedCategories.length > 0 && !selectedCategories.includes(model.category)) {
+      return false;
+    }
+
+    // Provider filter
+    if (selectedProviders.length > 0 && !selectedProviders.includes(String(model.provider_id))) {
+      return false;
+    }
+
+    // Context window filter
+    if (contextRange) {
+      const [min, max] = contextRange.split('-').map(Number);
+      const context = model.context_window || 0;
+      if (context < min || context > max) {
+        return false;
+      }
+    }
+
+    // Capabilities filter
+    if (selectedCaps.length > 0) {
+      const modelCaps = (model.capabilities || []).map(c => c.toLowerCase());
+      const hasAllCaps = selectedCaps.every(cap => modelCaps.includes(cap.toLowerCase()));
+      if (!hasAllCaps) {
+        return false;
+      }
+    }
+
+    // Orphaned filter
+    if (hideOrphaned && model.is_orphaned) {
+      return false;
+    }
+
+    return true;
+  });
+
+  renderModels();
+}
+
+function renderModels() {
+  const container = document.getElementById('models-grid');
+  const resultsCount = document.getElementById('results-count');
+
+  resultsCount.textContent = `Showing ${filteredModels.length} of ${allModels.length} models`;
+
+  if (filteredModels.length === 0) {
+    container.innerHTML = '<p class="muted">No models match your filters</p>';
+    return;
+  }
+
+  const cards = filteredModels.map(model => {
+    const icon = categoryIcons[model.category] || '📦';
+    const contextDisplay = model.context_window ? `${(model.context_window / 1024).toFixed(0)}K` : 'N/A';
+
+    return `
+      <div class="model-card ${model.is_orphaned ? 'orphaned' : ''}">
+        <div class="model-header">
+          <div>
+            <div class="model-name">${model.display_name || model.model_id}</div>
+            <div class="model-provider">${model.provider_name}</div>
+          </div>
+          <div class="model-category" title="${model.category}">${icon}</div>
+        </div>
+
+        <div class="model-meta">
+          ${model.context_window ? `<span class="meta-badge">📏 ${contextDisplay} context</span>` : ''}
+          ${model.is_orphaned ? `<span class="meta-badge" style="background: #ffebee; border-color: #ffccc2; color: #d32f2f;">⚠️ Orphaned</span>` : ''}
+          ${model.user_modified ? `<span class="meta-badge" style="background: #f0f7ff;">✏️ Modified</span>` : ''}
+        </div>
+
+        ${model.capabilities && model.capabilities.length > 0 ? `
+          <div class="capabilities-list">
+            ${model.capabilities.slice(0, 5).map(cap => `<span class="cap-badge">${cap}</span>`).join('')}
+            ${model.capabilities.length > 5 ? `<span class="cap-badge">+${model.capabilities.length - 5}</span>` : ''}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = cards;
+}
+
+function clearFilters() {
+  document.getElementById('search-input').value = '';
+  document.getElementById('filter-category').selectedIndex = -1;
+  document.getElementById('filter-provider').selectedIndex = -1;
+  document.getElementById('filter-context').selectedIndex = 0;
+  document.querySelectorAll('.cap-checkbox').forEach(cb => cb.checked = false);
+  document.getElementById('hide-orphaned').checked = true;
+  applyFilters();
+}
+
+// Real-time search
+document.addEventListener('DOMContentLoaded', () => {
+  loadData();
+
+  document.getElementById('search-input').addEventListener('input', () => {
+    applyFilters();
+  });
+
+  document.getElementById('hide-orphaned').addEventListener('change', () => {
+    applyFilters();
+  });
+});
+</script>
+
+{% endblock %}
