@@ -200,6 +200,9 @@ async def push_model_to_litellm(
         model=model,
     )
 
+    # Copy pricing fields into litellm_params so LiteLLM can bill requests
+    _merge_pricing_fields(litellm_params, model_info)
+
     # Set litellm_provider
     ollama_mode = model.ollama_mode or provider.default_ollama_mode or "ollama"
 
@@ -332,10 +335,11 @@ async def _needs_update(provider, model, litellm_model, config=None, session=Non
         model=model,
     )
     ll_info = litellm_model.get('model_info', {})
+    ll_params = litellm_model.get('litellm_params', {})
     for key, value in effective_info.items():
         if "cost" not in key:
             continue
-        if ll_info.get(key) != value:
+        if ll_info.get(key) != value or ll_params.get(key) != value:
             logger.debug("Pricing changed for %s: %s != %s", key, ll_info.get(key), value)
             return True
 
@@ -415,3 +419,12 @@ async def _build_litellm_params(provider, model, session=None) -> dict:
                         litellm_params["model"] = model_id
 
     return litellm_params
+
+
+def _merge_pricing_fields(target: dict, source: dict) -> None:
+    """Copy pricing-related fields from source into target."""
+    for key, value in source.items():
+        if value is None:
+            continue
+        if "cost" in key or key == "tiered_pricing":
+            target[key] = value
