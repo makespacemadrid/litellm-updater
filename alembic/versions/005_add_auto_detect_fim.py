@@ -1,6 +1,6 @@
-"""Add auto_detect_fim to providers (fix)
+"""Add auto_detect_fim to providers
 
-Revision ID: 006
+Revision ID: 005
 Revises: 004
 Create Date: 2025-12-26 00:00:00.000000
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '006'
+revision: str = '005'
 down_revision: Union[str, None] = '004'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
