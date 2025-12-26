@@ -44,9 +44,10 @@ class SyncWorker:
         # Create engine and session maker (using async URL)
         async_db_url = get_database_url()
         self.engine = create_engine(async_db_url)
-        self.session_maker = init_session_maker(self.engine)
-        # Ensure schema is up to date
+        # Ensure schema is up to date BEFORE creating session maker
+        # This prevents SQLAlchemy from caching old table structure
         await ensure_minimum_schema(self.engine)
+        self.session_maker = init_session_maker(self.engine)
         logger.info("Database initialized")
 
     async def run(self):

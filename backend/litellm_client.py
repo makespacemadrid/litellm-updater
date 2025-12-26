@@ -232,11 +232,28 @@ async def push_model_to_litellm(
     # Set litellm_provider
     ollama_mode = model.ollama_mode or provider.default_ollama_mode or "ollama"
 
+    # Auto-detect FIM (Fill-in-the-Middle) capability if enabled
+    # Check if provider has auto_detect_fim enabled and model has 'capability:insert' tag
+    if provider.auto_detect_fim:
+        model_params = model.litellm_params_dict or {}
+        tags = model_params.get("tags", [])
+        has_fim = any("capability:insert" in str(tag) for tag in tags)
+
+        # If FIM is detected and mode supports it, use text-completion-codestral
+        if has_fim and ollama_mode in ("ollama", "ollama_chat", "text-completion-codestral"):
+            ollama_mode = "text-completion-codestral"
+
     if provider.type == "openai":
         model_info["litellm_provider"] = "openai"
     elif provider.type == "ollama":
         model_info["mode"] = ollama_mode
-        model_info["litellm_provider"] = "openai" if ollama_mode == "openai" else "ollama"
+        if ollama_mode == "openai":
+            model_info["litellm_provider"] = "openai"
+        elif ollama_mode == "text-completion-codestral":
+            model_info["litellm_provider"] = "ollama"
+            model_info["supports_fill_in_middle"] = True
+        else:
+            model_info["litellm_provider"] = "ollama"
     elif provider.type == "compat":
         compat_mode = _get_compat_mode(model)
         model_info.setdefault("mode", "completion" if compat_mode == "completion" else "chat")
@@ -404,6 +421,17 @@ async def _build_litellm_params(provider, model, session=None) -> dict:
 
     ollama_mode = model.ollama_mode or provider.default_ollama_mode or "ollama_chat"
 
+    # Auto-detect FIM (Fill-in-the-Middle) capability if enabled
+    # Check if provider has auto_detect_fim enabled and model has 'capability:insert' tag
+    if provider.auto_detect_fim:
+        model_params = model.litellm_params_dict or {}
+        tags = model_params.get("tags", [])
+        has_fim = any("capability:insert" in str(tag) for tag in tags)
+
+        # If FIM is detected and mode supports it, use text-completion-codestral prefix
+        if has_fim and ollama_mode in ("ollama", "ollama_chat", "text-completion-codestral"):
+            ollama_mode = "text-completion-codestral"
+
     if provider.type == "openai":
         litellm_params["model"] = f"openai/{model_id}"
         litellm_params["api_base"] = provider.base_url
@@ -414,6 +442,10 @@ async def _build_litellm_params(provider, model, session=None) -> dict:
             api_base = provider.base_url.rstrip("/")
             litellm_params["api_base"] = f"{api_base}/v1"
             litellm_params["api_key"] = provider.api_key or "sk-1234"
+        elif ollama_mode == "text-completion-codestral":
+            # FIM mode: use text-completion-codestral prefix for Fill-in-the-Middle
+            litellm_params["model"] = f"text-completion-codestral/{model_id}"
+            litellm_params["api_base"] = provider.base_url
         elif ollama_mode == "ollama":
             litellm_params["model"] = f"ollama/{model_id}"
             litellm_params["api_base"] = provider.base_url

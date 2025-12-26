@@ -95,6 +95,7 @@ async def create_provider(
     sync_enabled: bool = True,
     pricing_profile: str | None = None,
     pricing_override: dict | None = None,
+    auto_detect_fim: bool = True,
 ) -> Provider:
     """Create a new provider."""
     if type_ == "ollama" and default_ollama_mode is None:
@@ -108,6 +109,7 @@ async def create_provider(
         default_ollama_mode=default_ollama_mode,
         sync_enabled=sync_enabled,
         pricing_profile=pricing_profile,
+        auto_detect_fim=auto_detect_fim,
     )
     provider.tags_list = normalize_tags(tags)
     provider.access_groups_list = normalize_tags(access_groups)
@@ -145,6 +147,7 @@ async def update_provider(
     sync_enabled: bool | None = None,
     pricing_profile: str | None = None,
     pricing_override: dict | None = None,
+    auto_detect_fim: bool | None = None,
 ) -> Provider:
     """Update existing provider."""
     if name is not None:
@@ -171,6 +174,8 @@ async def update_provider(
         provider.pricing_profile = pricing_profile
     if pricing_override is not None:
         provider.pricing_override_dict = pricing_override
+    if auto_detect_fim is not None:
+        provider.auto_detect_fim = auto_detect_fim
 
     provider.updated_at = datetime.now(UTC)
     return provider

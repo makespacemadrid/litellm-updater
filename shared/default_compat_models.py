@@ -1,16 +1,17 @@
 """Default OpenAI-compatible models configuration.
 
 This module defines the standard set of OpenAI model aliases that map to
-Ollama models, providing drop-in compatibility for applications using the
-OpenAI API format.
+Ollama and LocalAI models, providing drop-in compatibility for applications
+using the OpenAI API format.
 """
 
-# Default Ollama provider base URL
+# Default provider base URLs
 DEFAULT_OLLAMA_BASE = "https://olm.mksmad.org"
+DEFAULT_LOCALAI_BASE = "http://10.0.8.100:8081"
 
 # Complete list of OpenAI-compatible model definitions
 DEFAULT_COMPAT_MODELS = [
-    # ========== CHAT MODELS (Progressive Scale) ==========
+    # ========== CHAT MODELS ==========
     {
         "model_name": "gpt-3.5-turbo",
         "litellm_params": {
@@ -21,12 +22,13 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 262144,
-            "max_input_tokens": 262144,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
             "max_output_tokens": 8192,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
+            "supports_reasoning": True,
             "supports_native_streaming": True,
             "tags": ["compat", "openai-alias", "chat", "fast", "family:qwen3", "size:4B"],
         },
@@ -34,21 +36,43 @@ DEFAULT_COMPAT_MODELS = [
     {
         "model_name": "gpt-3.5-turbo-16k",
         "litellm_params": {
-            "model": "ollama/qwen3:4b",
+            "model": "ollama/qwen3:8b",
             "api_base": DEFAULT_OLLAMA_BASE,
             "tags": ["compat", "openai-alias", "chat", "fast"],
         },
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 262144,
-            "max_input_tokens": 262144,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
             "max_output_tokens": 8192,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
+            "supports_reasoning": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "chat", "fast", "family:qwen3", "size:4B"],
+            "tags": ["compat", "openai-alias", "chat", "fast", "family:qwen3", "size:8.2B"],
+        },
+    },
+    {
+        "model_name": "gpt-3.5-turbo-instruct",
+        "litellm_params": {
+            "model": "ollama/qwen2.5-coder:7b",
+            "api_base": DEFAULT_OLLAMA_BASE,
+            "tags": ["compat", "openai-alias", "chat", "instruct", "code"],
+        },
+        "model_info": {
+            "litellm_provider": "ollama",
+            "mode": "chat",
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
+            "max_output_tokens": 8192,
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+            "supports_system_messages": True,
+            "supports_function_calling": True,
+            "supports_native_streaming": True,
+            "tags": ["compat", "openai-alias", "chat", "instruct", "code", "family:qwen2.5", "size:7B"],
         },
     },
     {
@@ -61,12 +85,13 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 40960,
-            "max_input_tokens": 40960,
-            "max_output_tokens": 4096,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
+            "max_output_tokens": 8192,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
+            "supports_reasoning": True,
             "supports_native_streaming": True,
             "tags": ["compat", "openai-alias", "chat", "balanced", "family:qwen3", "size:8.2B"],
         },
@@ -74,41 +99,62 @@ DEFAULT_COMPAT_MODELS = [
     {
         "model_name": "gpt-4",
         "litellm_params": {
-            "model": "ollama/gpt-oss:20b",
+            "model": "ollama/qwen3:32b",
             "api_base": DEFAULT_OLLAMA_BASE,
-            "tags": ["compat", "openai-alias", "chat", "quality"],
+            "tags": ["compat", "openai-alias", "chat", "premium"],
         },
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 131072,
-            "max_input_tokens": 131072,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
+            "supports_reasoning": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "chat", "quality", "family:gptoss", "size:20.9B"],
+            "tags": ["compat", "openai-alias", "chat", "premium", "family:qwen3", "size:32.8B"],
         },
     },
     {
         "model_name": "gpt-4-32k",
         "litellm_params": {
-            "model": "ollama/gpt-oss:20b",
+            "model": "ollama/llama3.1:8b",
             "api_base": DEFAULT_OLLAMA_BASE,
-            "tags": ["compat", "openai-alias", "chat", "quality", "large-context"],
+            "tags": ["compat", "openai-alias", "chat", "large-context"],
         },
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 131072,
-            "max_input_tokens": 131072,
+            "max_tokens": 128000,
+            "max_input_tokens": 128000,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "chat", "quality", "large-context", "family:gptoss", "size:20.9B"],
+            "tags": ["compat", "openai-alias", "chat", "large-context", "family:llama", "size:8B"],
+        },
+    },
+    {
+        "model_name": "gpt-4-turbo",
+        "litellm_params": {
+            "model": "ollama/llama3.3:70b",
+            "api_base": DEFAULT_OLLAMA_BASE,
+            "tags": ["compat", "openai-alias", "chat", "best-quality"],
+        },
+        "model_info": {
+            "litellm_provider": "ollama",
+            "mode": "chat",
+            "max_tokens": 8192,
+            "max_input_tokens": 8192,
+            "max_output_tokens": 4096,
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+            "supports_system_messages": True,
+            "supports_native_streaming": True,
+            "tags": ["compat", "openai-alias", "chat", "best-quality", "family:llama", "size:70B"],
         },
     },
     {
@@ -121,12 +167,13 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 262144,
-            "max_input_tokens": 262144,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
+            "supports_reasoning": True,
             "supports_native_streaming": True,
             "tags": ["compat", "openai-alias", "chat", "premium", "family:qwen3", "size:32.8B"],
         },
@@ -142,15 +189,15 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 131072,
-            "max_input_tokens": 131072,
+            "max_tokens": 128000,
+            "max_input_tokens": 128000,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
             "supports_vision": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "vision", "family:mllama", "size:10.7B"],
+            "tags": ["compat", "openai-alias", "vision", "stable", "family:mllama", "size:10.7B"],
         },
     },
     {
@@ -158,20 +205,21 @@ DEFAULT_COMPAT_MODELS = [
         "litellm_params": {
             "model": "ollama/qwen3-vl:8b",
             "api_base": DEFAULT_OLLAMA_BASE,
-            "tags": ["compat", "openai-alias", "vision", "fast"],
+            "tags": ["compat", "openai-alias", "vision", "reasoning"],
         },
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 262144,
-            "max_input_tokens": 262144,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
             "supports_vision": True,
+            "supports_reasoning": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "vision", "fast", "family:qwen3vl", "size:8B"],
+            "tags": ["compat", "openai-alias", "vision", "reasoning", "family:qwen3vl", "size:8B"],
         },
     },
     {
@@ -184,13 +232,14 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 262144,
-            "max_input_tokens": 262144,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
             "supports_vision": True,
+            "supports_reasoning": True,
             "supports_native_streaming": True,
             "tags": ["compat", "openai-alias", "vision", "premium", "family:qwen3vl", "size:32B"],
         },
@@ -240,7 +289,7 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "embedding",
-            "max_input_tokens": 40960,
+            "max_input_tokens": 32768,
             "output_vector_size": 4096,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
@@ -258,15 +307,15 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 131072,
-            "max_input_tokens": 131072,
+            "max_tokens": 128000,
+            "max_input_tokens": 128000,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
             "supports_reasoning": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "reasoning", "fast", "family:qwen2", "size:7.6B"],
+            "tags": ["compat", "openai-alias", "reasoning", "fast", "family:deepseek", "size:7.6B"],
         },
     },
     {
@@ -279,15 +328,15 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 131072,
-            "max_input_tokens": 131072,
+            "max_tokens": 128000,
+            "max_input_tokens": 128000,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
             "supports_reasoning": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "reasoning", "balanced", "family:qwen2", "size:14B"],
+            "tags": ["compat", "openai-alias", "reasoning", "balanced", "family:deepseek", "size:14B"],
         },
     },
     {
@@ -300,24 +349,24 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 131072,
-            "max_input_tokens": 131072,
+            "max_tokens": 128000,
+            "max_input_tokens": 128000,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
             "supports_reasoning": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "reasoning", "premium", "family:qwen2", "size:32.8B"],
+            "tags": ["compat", "openai-alias", "reasoning", "premium", "family:deepseek", "size:32.8B"],
         },
     },
     # ========== CODE MODELS ==========
     {
-        "model_name": "code-davinci-002",
+        "model_name": "code-cushman-001",
         "litellm_params": {
-            "model": "ollama/qwen2.5-coder:14b",
+            "model": "ollama/qwen2.5-coder:1.5b",
             "api_base": DEFAULT_OLLAMA_BASE,
-            "tags": ["compat", "openai-alias", "code"],
+            "tags": ["compat", "openai-alias", "code", "lightweight"],
         },
         "model_info": {
             "litellm_provider": "ollama",
@@ -328,12 +377,34 @@ DEFAULT_COMPAT_MODELS = [
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
+            "supports_function_calling": True,
             "supports_native_streaming": True,
-            "tags": ["compat", "openai-alias", "code", "family:qwen2.5", "size:14B"],
+            "tags": ["compat", "openai-alias", "code", "lightweight", "family:qwen2.5", "size:1.5B"],
         },
     },
     {
-        "model_name": "gpt-4-code",
+        "model_name": "code-davinci-002",
+        "litellm_params": {
+            "model": "ollama/qwen2.5-coder:14b",
+            "api_base": DEFAULT_OLLAMA_BASE,
+            "tags": ["compat", "openai-alias", "code", "balanced"],
+        },
+        "model_info": {
+            "litellm_provider": "ollama",
+            "mode": "chat",
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
+            "max_output_tokens": 8192,
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+            "supports_system_messages": True,
+            "supports_function_calling": True,
+            "supports_native_streaming": True,
+            "tags": ["compat", "openai-alias", "code", "balanced", "family:qwen2.5", "size:14B"],
+        },
+    },
+    {
+        "model_name": "gpt-4.1",
         "litellm_params": {
             "model": "ollama/qwen3-coder:30b",
             "api_base": DEFAULT_OLLAMA_BASE,
@@ -342,14 +413,51 @@ DEFAULT_COMPAT_MODELS = [
         "model_info": {
             "litellm_provider": "ollama",
             "mode": "chat",
-            "max_tokens": 262144,
-            "max_input_tokens": 262144,
+            "max_tokens": 32768,
+            "max_input_tokens": 32768,
             "max_output_tokens": 16384,
             "input_cost_per_token": 0.0,
             "output_cost_per_token": 0.0,
             "supports_system_messages": True,
+            "supports_function_calling": True,
+            "supports_tool_choice": True,
             "supports_native_streaming": True,
             "tags": ["compat", "openai-alias", "code", "premium", "family:qwen3", "size:30B"],
+        },
+    },
+    # ========== IMAGE GENERATION MODELS ==========
+    {
+        "model_name": "dall-e-2",
+        "litellm_params": {
+            "model": "openai/stablediffusion",
+            "api_base": DEFAULT_LOCALAI_BASE,
+            "tags": ["compat", "openai-alias", "image-generation", "standard"],
+        },
+        "model_info": {
+            "litellm_provider": "openai",
+            "mode": "image_generation",
+            "max_images": 1,
+            "default_size": "512x512",
+            "supported_sizes": ["256x256", "512x512", "1024x1024"],
+            "output_cost_per_image": 0.0,
+            "tags": ["compat", "openai-alias", "image-gen", "stable-diffusion"],
+        },
+    },
+    {
+        "model_name": "dall-e-3",
+        "litellm_params": {
+            "model": "openai/dreamshaper",
+            "api_base": DEFAULT_LOCALAI_BASE,
+            "tags": ["compat", "openai-alias", "image-generation", "premium"],
+        },
+        "model_info": {
+            "litellm_provider": "openai",
+            "mode": "image_generation",
+            "max_images": 1,
+            "default_size": "512x512",
+            "supported_sizes": ["512x512", "1024x1024"],
+            "output_cost_per_image": 0.0,
+            "tags": ["compat", "openai-alias", "image-gen", "dreamshaper", "premium"],
         },
     },
 ]
@@ -363,11 +471,14 @@ def get_compat_models_by_category():
         "embedding": [],
         "reasoning": [],
         "code": [],
+        "image_generation": [],
     }
 
     for model in DEFAULT_COMPAT_MODELS:
         tags = model["litellm_params"]["tags"]
-        if "vision" in tags:
+        if "image-generation" in tags:
+            categories["image_generation"].append(model)
+        elif "vision" in tags:
             categories["vision"].append(model)
         elif "embedding" in tags:
             categories["embedding"].append(model)

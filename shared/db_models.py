@@ -30,6 +30,7 @@ class Provider(Base):
     pricing_profile: Mapped[str | None] = mapped_column(String, nullable=True)
     pricing_override: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON object
     sync_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    auto_detect_fim: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
@@ -50,7 +51,7 @@ class Provider(Base):
             name="check_provider_type",
         ),
         CheckConstraint(
-            "default_ollama_mode IS NULL OR default_ollama_mode IN ('ollama', 'ollama_chat', 'openai')",
+            "default_ollama_mode IS NULL OR default_ollama_mode IN ('ollama', 'ollama_chat', 'openai', 'text-completion-codestral')",
             name="check_default_ollama_mode",
         ),
     )

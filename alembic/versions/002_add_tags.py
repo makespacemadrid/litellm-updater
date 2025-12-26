@@ -19,16 +19,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('providers', sa.Column('tags', sa.Text(), nullable=True))
+    # Add columns with direct SQL to avoid transaction issues
+    # Use try/except for idempotency (columns might already exist)
 
-    op.add_column('models', sa.Column('system_tags', sa.Text(), nullable=False, server_default='[]'))
-    op.add_column('models', sa.Column('user_tags', sa.Text(), nullable=True))
+    try:
+        op.execute("ALTER TABLE providers ADD COLUMN tags TEXT")
+    except Exception:
+        pass  # Column already exists
 
-    # Backfill system_tags for existing rows
-    op.execute("UPDATE models SET system_tags = '[]' WHERE system_tags IS NULL")
+    try:
+        op.execute("ALTER TABLE models ADD COLUMN system_tags TEXT NOT NULL DEFAULT '[]'")
+    except Exception:
+        pass  # Column already exists
 
-    # Drop the server default now that rows are initialized
-    op.alter_column('models', 'system_tags', server_default=None)
+    try:
+        op.execute("ALTER TABLE models ADD COLUMN user_tags TEXT")
+    except Exception:
+        pass  # Column already exists
+
+    # Backfill system_tags for existing rows (safe to run multiple times)
+    op.execute("UPDATE models SET system_tags = '[]' WHERE system_tags IS NULL OR system_tags = ''")
 
 
 def downgrade() -> None:

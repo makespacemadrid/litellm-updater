@@ -273,6 +273,7 @@ async function openEditProvider(id) {
     document.getElementById('edit-pricing-input').value = (provider.pricing_override || {}).input_cost_per_token ?? '';
     document.getElementById('edit-pricing-output').value = (provider.pricing_override || {}).output_cost_per_token ?? '';
     document.getElementById('edit-sync-enabled').checked = provider.sync_enabled !== false;
+    document.getElementById('edit-auto-detect-fim').checked = provider.auto_detect_fim !== false;
     toggleEditOllamaFields();
 
     document.getElementById('edit-provider-modal').style.display = 'block';
@@ -291,6 +292,7 @@ async function saveProviderEdits(event) {
   const form = document.getElementById('edit-provider-form');
   const formData = new FormData(form);
   formData.set('sync_enabled', document.getElementById('edit-sync-enabled').checked ? 'true' : 'false');
+  formData.set('auto_detect_fim', document.getElementById('edit-auto-detect-fim').checked ? 'true' : 'false');
 
   try {
     const response = await fetch(`/api/providers/${id}`, {
@@ -366,12 +368,17 @@ document.addEventListener('DOMContentLoaded', () => {
               <option value="ollama_chat">Ollama Chat (recommended)</option>
               <option value="ollama">Ollama</option>
               <option value="openai">OpenAI</option>
+              <option value="text-completion-codestral">Text Completion (FIM/Code Completion)</option>
             </select>
           </label>
         </div>
         <label style="display: flex; align-items: center; gap: 0.5rem;">
           <input type="checkbox" name="sync_enabled" checked />
           <span>Sync Enabled</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.5rem;">
+          <input type="checkbox" name="auto_detect_fim" checked />
+          <span>Auto-detect FIM (Fill-in-the-Middle for code completion)</span>
         </label>
         <div class="modal-actions" style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
           <button type="button" onclick="closeAddModal()">Cancel</button>
@@ -431,12 +438,17 @@ document.addEventListener('DOMContentLoaded', () => {
               <option value="ollama_chat">Ollama Chat (recommended)</option>
               <option value="ollama">Ollama</option>
               <option value="openai">OpenAI</option>
+              <option value="text-completion-codestral">Text Completion (FIM/Code Completion)</option>
             </select>
           </label>
         </div>
         <label style="display: flex; align-items: center; gap: 0.5rem;">
           <input type="checkbox" id="edit-sync-enabled" name="sync_enabled" />
           <span>Sync Enabled</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.5rem;">
+          <input type="checkbox" id="edit-auto-detect-fim" name="auto_detect_fim" />
+          <span>Auto-detect FIM (Fill-in-the-Middle for code completion)</span>
         </label>
         <div class="modal-actions" style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
           <button type="button" onclick="closeEditModal()">Cancel</button>

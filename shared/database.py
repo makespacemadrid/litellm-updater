@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 import logging
 
+# Import Base at module level to ensure all models are loaded
+from .db_models import Base
+
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -67,9 +70,8 @@ async def ensure_minimum_schema(engine: AsyncEngine) -> None:
     then uses lightweight ALTER TABLE statements to add missing columns
     introduced after the initial schema.
     """
-    from .db_models import Base
-
-    async with engine.begin() as conn:
+    # Use connect() instead of begin() to avoid automatic rollback on exceptions
+    async with engine.connect() as conn:
         # First, create all tables if they don't exist
         await conn.run_sync(Base.metadata.create_all)
 
@@ -88,6 +90,16 @@ async def ensure_minimum_schema(engine: AsyncEngine) -> None:
             await conn.exec_driver_sql("ALTER TABLE providers ADD COLUMN pricing_profile VARCHAR")
         if "pricing_override" not in provider_columns:
             await conn.exec_driver_sql("ALTER TABLE providers ADD COLUMN pricing_override TEXT")
+        # Always try to add auto_detect_fim column (will fail if already exists)
+        logger.info(f"Checking auto_detect_fim column... current columns: {provider_columns}")
+        try:
+            await conn.exec_driver_sql(
+                "ALTER TABLE providers ADD COLUMN auto_detect_fim INTEGER NOT NULL DEFAULT 1"
+            )
+            logger.info("auto_detect_fim column added successfully!")
+        except Exception as e:
+            # Column already exists - this is expected and OK
+            logger.info(f"auto_detect_fim column already exists (expected): {str(e)[:100]}")
 
         # Models.system_tags / user_tags / access_groups / sync_enabled / mapped_provider_id / mapped_model_id
         result = await conn.exec_driver_sql("PRAGMA table_info(models)")
@@ -129,6 +141,9 @@ async def ensure_minimum_schema(engine: AsyncEngine) -> None:
             await conn.exec_driver_sql("ALTER TABLE config ADD COLUMN default_pricing_profile VARCHAR")
         if "default_pricing_override" not in config_columns:
             await conn.exec_driver_sql("ALTER TABLE config ADD COLUMN default_pricing_override TEXT")
+
+        # Manually commit all changes
+        await conn.commit()
 
         # Update provider type constraint to allow 'compat' type
         # SQLite doesn't support ALTER CHECK CONSTRAINT, so we need to check if the constraint allows 'compat'

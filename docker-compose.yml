@@ -1,12 +1,12 @@
 services:
   # Backend sync worker (no HTTP server)
-  model-updater-backend:
+  litellm-companion-backend:
     image: ghcr.io/makespacemadrid/litellm-companion-backend:latest
     build:
       context: .
       dockerfile: Dockerfile
-    command: python -m backend.sync_worker
-    container_name: model-updater-backend
+    command: bash /app/scripts/start_backend.sh
+    container_name: litellm-companion-backend
     restart: unless-stopped
     volumes:
       - ./data:/app/data
@@ -18,13 +18,13 @@ services:
       com.centurylinklabs.watchtower.enable: "true"
 
   # Frontend API + UI
-  model-updater-web:
+  litellm-companion-web:
     image: ghcr.io/makespacemadrid/litellm-companion-web:latest
     build:
       context: .
       dockerfile: Dockerfile
-    command: uvicorn frontend.api:create_app --factory --host 0.0.0.0 --port 8000
-    container_name: model-updater-web
+    command: bash /app/scripts/start_web.sh
+    container_name: litellm-companion-web
     restart: unless-stopped
     ports:
       - "${PORT:-4001}:8000"
@@ -33,20 +33,20 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
-      - model-updater-backend
+      - litellm-companion-backend
     networks:
       - litellm
     labels:
       com.centurylinklabs.watchtower.enable: "true"
 
   # OpenAI-compatible proxy (chat/completions)
-  model-updater-proxy:
+  litellm-companion-proxy:
     image: ghcr.io/makespacemadrid/litellm-companion-proxy:latest
     build:
       context: .
       dockerfile: Dockerfile
     command: uvicorn proxy.api:create_app --factory --host 0.0.0.0 --port 8000
-    container_name: model-updater-proxy
+    container_name: litellm-companion-proxy
     restart: unless-stopped
     ports:
       - "${PROXY_PORT:-4002}:8000"
