@@ -39,13 +39,19 @@
         <input type="hidden" id="compat-model-id" />
 
         <label>Model Name <span style="color: red;">*</span></label>
-        <input type="text" id="compat-name" list="openai-models" placeholder="gpt-4, gpt-3.5-turbo, whisper-1, etc." required />
+        <input type="text" id="compat-name" list="openai-models" placeholder="gpt-4o, gpt-4, whisper-1, etc." required />
         <datalist id="openai-models">
-          <option value="gpt-4">
+          <option value="gpt-4o">
+          <option value="gpt-4o-mini">
           <option value="gpt-4-turbo">
-          <option value="gpt-4-turbo-preview">
+          <option value="gpt-4">
+          <option value="gpt-4-32k">
           <option value="gpt-3.5-turbo">
           <option value="gpt-3.5-turbo-16k">
+          <option value="o1">
+          <option value="o1-mini">
+          <option value="o1-preview">
+          <option value="o3-mini">
           <option value="whisper-1">
           <option value="tts-1">
           <option value="tts-1-hd">
@@ -334,22 +340,27 @@ let providerModels = {};
 const OPENAI_CATEGORIES = {
   'Chat': {
     icon: '💬',
-    models: ['gpt-4', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo', 'gpt-3.5-turbo-16k', 'gpt-4-32k'],
+    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-4-32k', 'gpt-3.5-turbo', 'gpt-3.5-turbo-16k'],
     description: 'Chat completion models'
   },
   'Vision': {
     icon: '👁️',
-    models: ['gpt-4-vision-preview', 'gpt-4-turbo-vision', 'gpt-4o-vision'],
+    models: ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision-preview', 'gpt-4-turbo-vision'],
     description: 'Vision-enabled models'
+  },
+  'Function Calling': {
+    icon: '🔧',
+    models: ['gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
+    description: 'Function/tool calling support'
   },
   'Code': {
     icon: '💻',
-    models: ['code-davinci-002', 'gpt-4-code'],
+    models: ['gpt-4o', 'gpt-4-turbo', 'code-davinci-002'],
     description: 'Code generation models'
   },
   'Reasoning': {
     icon: '🧠',
-    models: ['o1', 'o1-mini', 'o1-preview'],
+    models: ['o1', 'o1-mini', 'o1-preview', 'o3-mini'],
     description: 'Advanced reasoning models'
   },
   'Embeddings': {
@@ -357,19 +368,19 @@ const OPENAI_CATEGORIES = {
     models: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
     description: 'Text embedding models'
   },
-  'Speech-to-Text': {
+  'Audio (STT)': {
     icon: '🎤',
     models: ['whisper-1'],
-    description: 'Audio transcription'
+    description: 'Audio transcription (Speech-to-Text)'
   },
-  'Text-to-Speech': {
+  'Audio (TTS)': {
     icon: '🔊',
     models: ['tts-1', 'tts-1-hd'],
-    description: 'Voice generation'
+    description: 'Voice generation (Text-to-Speech)'
   },
   'Images': {
     icon: '🎨',
-    models: ['dall-e-2', 'dall-e-3'],
+    models: ['dall-e-3', 'dall-e-2'],
     description: 'Image generation'
   }
 };
@@ -668,7 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Register all default OpenAI-compatible models
 async function registerDefaultModels() {
-  if (!confirm('This will add 17 default OpenAI-compatible model mappings (gpt-4, gpt-3.5-turbo, o1, etc.) to the compat provider. Continue?')) {
+  if (!confirm('This will add 22 default OpenAI-compatible model mappings (gpt-4o, gpt-4, gpt-3.5-turbo, o1, embeddings, etc.) to the compat provider. Continue?')) {
     return;
   }
 

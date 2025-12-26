@@ -51,7 +51,7 @@ class Provider(Base):
             name="check_provider_type",
         ),
         CheckConstraint(
-            "default_ollama_mode IS NULL OR default_ollama_mode IN ('ollama', 'ollama_chat', 'openai', 'text-completion-codestral')",
+            "default_ollama_mode IS NULL OR default_ollama_mode IN ('ollama', 'ollama_chat', 'openai')",
             name="check_default_ollama_mode",
         ),
     )

@@ -2,11 +2,12 @@
 
 ## 📋 Resumen
 
-Basado en los issues [#4542](https://github.com/continuedev/continue/issues/4542) y [#9251](https://github.com/BerriAI/litellm/issues/9251), **SÍ es posible** usar FIM (Fill-in-the-Middle) a través de LiteLLM, pero requiere configuración especial.
+LiteLLM Companion detecta automáticamente modelos con capacidad FIM (Fill-in-the-Middle) y marca esta capacidad en los metadatos del modelo. Los clientes como Continue.dev y Cursor pueden usar los modelos directamente sin necesidad de configuración especial.
 
 ## ✅ Estado Actual en Nuestro Sistema
 
 ### 1. Detección Automática
+
 ```python
 # Los modelos qwen2.5-coder reportan desde Ollama:
 {
@@ -14,89 +15,53 @@ Basado en los issues [#4542](https://github.com/continuedev/continue/issues/4542
 }
 
 # Nuestro código (shared/models.py) automáticamente:
-# - Extrae la capability "insert"
-# - La convierte a tag: "capability:insert"
-# - Mapea a campos: supports_fill_in_middle, supports_code_infilling
+# - Extrae la capability "insert" / "fill_in_middle" / "fim"
+# - La convierte a campos: supports_fill_in_middle, supports_code_infilling
+# - Los marca en model_info al registrar en LiteLLM
 ```
 
 ### 2. Modelos con FIM Detectados
+
 - `qwen2.5-coder:1.5b` ✓
 - `qwen2.5-coder:7b` ✓
 - `qwen2.5-coder:7b-base` ✓
 - `qwen2.5-coder:14b` ✓
+- Otros modelos que reporten "insert" en capabilities
 
-## 🔧 Cómo Funciona FIM
+## 🔧 Cómo Funciona
 
-### Opción A: Usar Ollama Directo (Más Simple)
+### Registro en LiteLLM
 
-**Endpoint:** `/api/generate`
+Cuando un proveedor tiene `auto_detect_fim=true` (por defecto), el sistema:
 
-```bash
-curl http://localhost:11434/api/generate -d '{
-  "model": "qwen2.5-coder:7b",
-  "prompt": "def compute_gcd(a, b):",
-  "suffix": "    return result",
-  "stream": false
-}'
-```
+1. **Detecta** modelos con `supports_fill_in_middle` en sus capacidades
+2. **Marca** en `model_info`:
+   ```json
+   {
+     "supports_fill_in_middle": true,
+     "supports_code_infilling": true
+   }
+   ```
+3. **Registra** el modelo normalmente en LiteLLM (sin duplicados ni prefijos especiales)
 
-**Ventajas:**
-- ✓ Funciona directamente sin configuración adicional
-- ✓ Formato nativo de Ollama
-- ✓ Soporta `suffix` parameter
+### Ejemplo de Modelo Registrado
 
-**Desventajas:**
-- ✗ No pasa por LiteLLM (sin logging/analytics/rate limiting)
-- ✗ No puede usar access groups de LiteLLM
-- ✗ No aparece en el dashboard de LiteLLM
-
-### Opción B: A través de LiteLLM (Requiere Workaround)
-
-**Endpoint:** `/v1/completions` (NO `/fim/completions`)
-
-**IMPORTANTE:** LiteLLM no tiene endpoint nativo `/fim/completions`, pero podemos usar `/v1/completions` con un truco.
-
-#### Paso 1: Registrar el Modelo con Prefijo Especial
-
-```python
-# En LiteLLM, registrar con prefijo text-completion-codestral/
+```json
 {
-  "model_name": "mks-ollama/qwen2.5-coder:7b-fim",
+  "model_name": "mks-ollama/qwen2.5-coder:7b",
   "litellm_params": {
-    "model": "text-completion-codestral/qwen2.5-coder:7b",  # ← Prefijo mágico
-    "api_base": "http://ollama:11434"
+    "model": "ollama_chat/qwen2.5-coder:7b",
+    "api_base": "http://ollama:11434",
+    "tags": ["capability:fill-in-middle", "capability:code-infilling", ...]
   },
   "model_info": {
-    "mode": "completion",  # NO "chat"
-    "supports_fill_in_middle": true
+    "litellm_provider": "ollama",
+    "mode": "ollama_chat",
+    "supports_fill_in_middle": true,
+    "supports_code_infilling": true
   }
 }
 ```
-
-#### Paso 2: Llamar al Endpoint `/v1/completions`
-
-```bash
-curl http://localhost:4000/v1/completions \
-  -H "Authorization: Bearer sk-1234" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mks-ollama/qwen2.5-coder:7b-fim",
-    "prompt": "def compute_gcd(a, b):",
-    "suffix": "    return result",
-    "max_tokens": 100,
-    "temperature": 0
-  }'
-```
-
-**Ventajas:**
-- ✓ Pasa por LiteLLM (logging, analytics, rate limiting)
-- ✓ Access groups de LiteLLM
-- ✓ Dashboard unificado
-
-**Desventajas:**
-- ✗ Requiere registrar modelo DOS veces (versión chat + versión FIM)
-- ✗ Workaround no oficial (puede cambiar)
-- ✗ Más complejo de configurar
 
 ## 🎯 Integración con Continue.dev / Cursor
 
@@ -107,8 +72,8 @@ curl http://localhost:4000/v1/completions \
 ```json
 {
   "tabAutocompleteModel": {
-    "provider": "siliconflow",  // ← Trick: NO usar "openai"
-    "model": "qwen2.5-coder:7b-fim",
+    "provider": "siliconflow",
+    "model": "qwen2.5-coder:7b",
     "apiBase": "http://localhost:4000/",
     "apiKey": "sk-1234"
   }
@@ -116,93 +81,66 @@ curl http://localhost:4000/v1/completions \
 ```
 
 **¿Por qué "siliconflow"?**
-- Continue.dev aplica formato chat cuando detecta provider "openai"
-- Usando "siliconflow" envía el formato correcto con tokens FIM
+- Continue.dev usa formato FIM nativo cuando detecta ciertos providers
+- `siliconflow` es uno de los providers que soporta FIM automáticamente
+- Esto evita que Continue.dev aplique formato chat a las peticiones
 
-### Cursor / Otros IDEs
+**Alternativa (si el provider soporta OpenAI + FIM):**
 
-Similar configuración, depende de cómo el IDE envía las peticiones.
-
-## 📊 Comparativa de Enfoques
-
-| Aspecto | Ollama Directo | LiteLLM Proxy |
-|---------|----------------|---------------|
-| **Endpoint** | `/api/generate` | `/v1/completions` |
-| **Configuración** | Simple | Compleja (prefijo especial) |
-| **Parámetro suffix** | ✓ Nativo | ✓ Via workaround |
-| **LiteLLM logging** | ✗ | ✓ |
-| **Access control** | ✗ | ✓ |
-| **Dashboard** | ✗ | ✓ |
-| **Rate limiting** | ✗ | ✓ |
-| **Estabilidad** | ✓✓✓ | ⚠️ Workaround |
-
-## 🚀 Propuesta de Implementación
-
-### Opción 1: Doble Registro (Automático)
-
-Para cada modelo con `capability:insert`, registrar DOS versiones en LiteLLM:
-
-```python
-# Ejemplo: qwen2.5-coder:7b
-
-# 1. Versión Chat (normal)
+```json
 {
-  "model_name": "mks-ollama/qwen2.5-coder:7b",
-  "litellm_params": {
-    "model": "ollama/qwen2.5-coder:7b",
-    "api_base": "http://ollama:11434"
-  },
-  "model_info": {
-    "mode": "chat"
-  }
-}
-
-# 2. Versión FIM (code completion)
-{
-  "model_name": "mks-ollama/qwen2.5-coder:7b-fim",  # Sufijo -fim
-  "litellm_params": {
-    "model": "text-completion-codestral/qwen2.5-coder:7b",  # Prefijo especial
-    "api_base": "http://ollama:11434"
-  },
-  "model_info": {
-    "mode": "completion",
-    "supports_fill_in_middle": true,
-    "supports_code_infilling": true
+  "tabAutocompleteModel": {
+    "provider": "openai",
+    "model": "qwen2.5-coder:7b",
+    "apiBase": "http://localhost:4000/v1",
+    "apiKey": "sk-1234"
   }
 }
 ```
 
-### Opción 2: Solo Documentar (Manual)
+### Cursor
 
-- Documentar que los usuarios pueden usar Ollama directo para FIM
-- Proporcionar ejemplos de configuración para Continue.dev/Cursor
-- No registrar automáticamente versiones FIM
+Similar configuración en `settings.json`:
 
-### Opción 3: Flag de Usuario
-
-Agregar un flag en la UI del provider:
+```json
+{
+  "cursor.cpp.fimModel": {
+    "provider": "siliconflow",
+    "model": "qwen2.5-coder:7b",
+    "apiBase": "http://localhost:4000/",
+    "apiKey": "sk-1234"
+  }
+}
 ```
-☐ Register FIM variants for code models
-```
 
-Si está activado, auto-registrar versiones `-fim` de modelos con `capability:insert`.
+## 📊 Ventajas del Nuevo Enfoque
+
+| Aspecto | Enfoque Anterior | Nuevo Enfoque |
+|---------|------------------|---------------|
+| **Modelos duplicados** | ✗ Requería versión -fim separada | ✓ Un solo modelo |
+| **Configuración** | ✗ Prefijo text-completion-codestral | ✓ Modo normal |
+| **Detección FIM** | ✓ Automática | ✓ Automática |
+| **Metadatos** | ⚠️ En modelo separado | ✓ En modelo principal |
+| **Simplicidad** | ✗ Compleja | ✓ Simple |
+| **Mantenimiento** | ✗ Dos modelos | ✓ Un modelo |
 
 ## 🔍 Verificación
 
 ### Check si un modelo tiene FIM:
 
 ```bash
-# Via API
-curl http://localhost:8000/api/models/123 | jq '.litellm_params.supports_fill_in_middle'
+# Via LiteLLM API
+curl http://localhost:4000/model/info \
+  -H "Authorization: Bearer sk-1234" | \
+  jq '.data[] | select(.model_info.supports_fill_in_middle == true) | .model_name'
 
-# Via database
-sqlite3 data/models.db "
-  SELECT model_id, litellm_params
-  FROM models m
-  JOIN providers p ON m.provider_id = p.id
-  WHERE p.name = 'mks'
-    AND json_extract(litellm_params, '$.supports_fill_in_middle') = 1
-"
+# Via API local
+curl http://localhost:8000/api/models/123 | \
+  jq '{
+    model: .model_id,
+    fim: .litellm_params.supports_fill_in_middle,
+    infilling: .litellm_params.supports_code_infilling
+  }'
 ```
 
 ### Test FIM directo con Ollama:
@@ -216,37 +154,45 @@ curl http://localhost:11434/api/generate -d '{
 }' | jq -r '.response'
 ```
 
-### Test FIM via LiteLLM:
+### Test via LiteLLM con Continue.dev:
 
-```bash
-# Primero registrar el modelo con prefijo text-completion-codestral/
-# Luego:
-curl http://localhost:4000/v1/completions \
-  -H "Authorization: Bearer sk-1234" \
-  -d '{
-    "model": "mks-ollama/qwen2.5-coder:7b-fim",
-    "prompt": "def fibonacci(n):",
-    "suffix": "    return result",
-    "max_tokens": 100
-  }' | jq -r '.choices[0].text'
+1. Configura Continue.dev con `provider: "siliconflow"`
+2. El autocompletado debería funcionar automáticamente
+3. LiteLLM rutea la petición a Ollama preservando el contexto FIM
+
+## ⚙️ Configuración del Provider
+
+### Habilitar/Deshabilitar Auto-detección FIM
+
+En la UI de Admin (`/admin`), al editar un provider:
+
 ```
+☑ Auto-detect FIM
+  Automatically detect and mark Fill-in-the-Middle capability
+  for code models with insert/infilling support
+```
+
+Por defecto está **habilitado**. Si lo deshabilitas:
+- No se detectará FIM automáticamente
+- Puedes marcar manualmente `supports_fill_in_middle` en los parámetros del modelo
 
 ## 📚 Referencias
 
-- [Continue.dev Issue #4542](https://github.com/continuedev/continue/issues/4542) - Tab autocomplete no funciona con OpenAI provider
+- [Continue.dev Issue #4542](https://github.com/continuedev/continue/issues/4542) - Tab autocomplete configuration
 - [LiteLLM Issue #9251](https://github.com/BerriAI/litellm/issues/9251) - FIM/Completions support
-- [Ollama API - Generate](https://docs.ollama.com/api/generate) - Documentación oficial del parámetro suffix
-- [Ollama FIM Issue #3869](https://github.com/ollama/ollama/issues/3869) - API para FIM tasks
+- [Ollama API - Generate](https://docs.ollama.com/api/generate) - Documentación del parámetro suffix
+- [Ollama FIM Issue #3869](https://github.com/ollama/ollama/issues/3869) - FIM API support
 
-## 🎬 Próximos Pasos
+## 🎬 Estado de Implementación
 
-1. ✅ **HECHO:** Agregar detección de capability "insert" → `supports_fill_in_middle`
-2. ⏳ **PENDIENTE:** Decidir estrategia de registro (automático vs manual)
-3. ⏳ **PENDIENTE:** Actualizar UI para mostrar modelos con FIM
-4. ⏳ **PENDIENTE:** Documentar configuración para Continue.dev/Cursor
-5. ⏳ **PENDIENTE:** Tests de integración con FIM
+1. ✅ **HECHO:** Detección de capability "insert" → `supports_fill_in_middle`
+2. ✅ **HECHO:** Marcado automático de capacidad FIM en model_info
+3. ✅ **HECHO:** Eliminado workaround de text-completion-codestral
+4. ✅ **HECHO:** Simplificado a un solo modelo por versión
+5. ⏳ **PENDIENTE:** Documentar configuración específica para otros IDEs
+6. ⏳ **PENDIENTE:** Tests de integración con Continue.dev/Cursor
 
 ---
 
-**Última actualización:** 2025-12-25
-**Estado:** Campo `supports_fill_in_middle` implementado, pendiente estrategia de registro dual
+**Última actualización:** 2025-12-26
+**Estado:** Sistema simplificado - FIM detectado automáticamente como capacidad del modelo

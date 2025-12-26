@@ -9,10 +9,14 @@ A FastAPI service that synchronizes models from Ollama or other LiteLLM/OpenAI-c
 - **Model parameter editing** with user override preservation across syncs
 - **Orphaned model detection** - highlights models no longer available in source
 - **Per-model actions**: Refresh from source, Push to LiteLLM, Edit parameters
+- **Full OpenAI API compatibility** - 30+ OpenAI parameters supported across 85+ models
+- **Multi-capability models** - Vision (19), Function calling (34), Embeddings (9), Audio (4)
 - Configurable sources (Ollama or LiteLLM/OpenAI compatible)
 - Periodic sync job that registers upstream models with LiteLLM
 - Manual sync trigger from the UI
 - Web UI for browsing models with database persistence
+
+> **📊 Model Statistics**: See [MODEL_STATISTICS.md](MODEL_STATISTICS.md) for detailed statistics on available models and OpenAI API coverage.
 
 ## Getting started
 1. **Install dependencies**
@@ -24,7 +28,7 @@ A FastAPI service that synchronizes models from Ollama or other LiteLLM/OpenAI-c
    ```bash
    PORT=8000 litellm-companion
    # or
-   PORT=8000 uvicorn litellm_updater.web:create_app --port $PORT
+   PORT=8000 uvicorn frontend.api:create_app --factory --port $PORT
    ```
 
    The server defaults to `http://0.0.0.0:8000`.
@@ -109,3 +113,9 @@ A FastAPI service that synchronizes models from Ollama or other LiteLLM/OpenAI-c
 - **User-edited parameters are preserved** across syncs (stored in `user_params` field)
 - **Orphaned models** (no longer in provider) are highlighted in red in the UI
 - **Database migrations** are handled by Alembic (auto-run on startup)
+
+## Documentation
+
+- [MODEL_STATISTICS.md](MODEL_STATISTICS.md) - Model statistics and OpenAI API coverage
+- [MIGRATION.md](MIGRATION.md) - Migration guide from previous versions
+- [CLAUDE.md](CLAUDE.md) - Development guide for contributors

@@ -52,7 +52,7 @@ class SourceEndpoint(BaseModel):
     )
     auto_detect_fim: bool = Field(
         True,
-        description="Automatically detect and enable Fill-in-the-Middle (FIM) mode for code models with insert capability",
+        description="Automatically detect and mark Fill-in-the-Middle (FIM) capability for code models with insert/infilling support",
     )
 
     @model_validator(mode="after")
@@ -61,8 +61,8 @@ class SourceEndpoint(BaseModel):
         if self.default_ollama_mode is not None:
             if self.type != SourceType.OLLAMA:
                 raise ValueError("default_ollama_mode is only valid for Ollama sources")
-            if self.default_ollama_mode not in ("ollama", "ollama_chat", "openai", "text-completion-codestral"):
-                raise ValueError("default_ollama_mode must be 'ollama', 'ollama_chat', 'openai', or 'text-completion-codestral'")
+            if self.default_ollama_mode not in ("ollama", "ollama_chat", "openai"):
+                raise ValueError("default_ollama_mode must be 'ollama', 'ollama_chat', or 'openai'")
         elif self.type == SourceType.OLLAMA:
             # Default to chat-friendly Ollama mode when not provided
             self.default_ollama_mode = "ollama_chat"

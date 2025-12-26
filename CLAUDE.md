@@ -47,14 +47,14 @@ python -m backend.sync_worker
 
 ```bash
 # Build images
-docker compose build --no-cache model-updater-backend model-updater-web
+docker compose build --no-cache litellm-companion-backend litellm-companion-web
 
 # Start all services
 docker compose up -d
 
 # View logs
-docker compose logs -f model-updater-web
-docker compose logs -f model-updater-backend
+docker compose logs -f litellm-companion-web
+docker compose logs -f litellm-companion-backend
 ```
 
 ### Testing
@@ -80,17 +80,17 @@ ruff format .
 ## Deployment & Live Testing
 
 Compose brings up:
-- `model-updater-backend`: sync worker (no HTTP). Runs `python -m backend.sync_worker`.
-- `model-updater-web`: UI/API on `http://localhost:4001`. Runs `frontend.api:create_app` via uvicorn.
+- `litellm-companion-backend`: sync worker (no HTTP). Runs `python -m backend.sync_worker`.
+- `litellm-companion-web`: UI/API on `http://localhost:4001`. Runs `frontend.api:create_app` via uvicorn.
 - `litellm`: target proxy on `http://localhost:4000` (`Authorization: Bearer sk-1234`).
 - `db`: Postgres backing LiteLLM.
 - `watchtower`: optional image updater (labelled).
 
-**IMPORTANT:** The `model-updater-web` service MUST use `command: uvicorn frontend.api:create_app --factory --host 0.0.0.0 --port 8000` in docker-compose.yml to run the correct application.
+**IMPORTANT:** The `litellm-companion-web` service MUST use `command: uvicorn frontend.api:create_app --factory --host 0.0.0.0 --port 8000` in docker-compose.yml to run the correct application.
 
 Rebuild + relaunch after code changes:
 ```bash
-docker compose build --no-cache model-updater-backend model-updater-web
+docker compose build --no-cache litellm-companion-backend litellm-companion-web
 docker compose up -d
 ```
 
@@ -99,8 +99,8 @@ Quick checks:
 docker compose ps
 curl -s http://localhost:4001/sources  # Check if UI is accessible
 curl -s -H "Authorization: Bearer sk-1234" http://localhost:4000/health/liveliness
-docker compose logs --tail=50 model-updater-web
-docker compose logs --tail=50 model-updater-backend
+docker compose logs --tail=50 litellm-companion-web
+docker compose logs --tail=50 litellm-companion-backend
 ```
 
 ## Operational Notes
@@ -490,7 +490,7 @@ open http://localhost:4001/sources
 ```
 
 ## Recent Changes & Gotchas
-- The **frontend service must run `frontend.api:create_app`** (not the legacy `litellm_updater.web`). This is configured via `command:` in docker-compose.yml.
+- The **frontend service must run `frontend.api:create_app`** factory pattern. This is configured via `command:` in docker-compose.yml.
 - Ollama `/api/tags` responses that return a bare list (instead of `{ "models": [...] }`) are now parsed correctly; this fixes empty syncs from some servers.
 - `mode:*` tags are only generated for Ollama providers. OpenAI/compat providers should no longer get `mode:ollama` attached to their models.
 - Duplicate detection when pushing to LiteLLM now reads tags from both `litellm_params` and `model_info`, so older LiteLLM entries without top-level tags are still de-duped.

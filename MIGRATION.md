@@ -179,4 +179,12 @@ Si encuentras problemas durante la migración:
 
 ---
 
+## Ver También
+
+- [MODEL_STATISTICS.md](MODEL_STATISTICS.md) - Estadísticas de modelos y cobertura de API de OpenAI
+- [README.md](README.md) - Documentación general del proyecto
+- [CLAUDE.md](CLAUDE.md) - Guía de desarrollo
+
+---
+
 **Última actualización**: 2025-12-26
