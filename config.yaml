@@ -1,0 +1,13 @@
+general_settings:
+  # Enable storing models in the database
+  store_model_in_db: true
+
+  # Enable request/response logging in spend logs
+  store_prompts_in_spend_logs: true
+
+  # Optional: Set max parallel requests (uncomment if needed)
+  # max_parallel_requests: 100
+
+  # Optional: Enable success/failure callbacks for logging (uncomment if needed)
+  # success_callback: ["langfuse"]
+  # failure_callback: ["langfuse"]
