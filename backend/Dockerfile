@@ -16,6 +16,7 @@ COPY alembic.ini /app/alembic.ini
 
 # Copy backend code
 COPY backend/ /app/backend/
+COPY scripts/ /app/scripts/
 
 # Run sync worker
 CMD ["python", "-m", "backend.sync_worker"]

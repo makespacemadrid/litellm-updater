@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir -r frontend/requirements.txt
 
 # Copy shared code
 COPY shared/ /app/shared/
+COPY alembic/ /app/alembic/
+COPY alembic.ini /app/alembic.ini
+COPY scripts/ /app/scripts/
 
 # Copy backend helpers used by frontend sync endpoints
 COPY backend/ /app/backend/
