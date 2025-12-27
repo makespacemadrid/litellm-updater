@@ -1,6 +1,6 @@
 [project]
 name = "litellm-companion"
-version = "0.5.27"
+version = "0.5.28"
 description = "Synchronize models from Ollama or OpenAI-compatible endpoints into LiteLLM"
 authors = [
   {name = "LiteLLM Companion Authors", email = "dev@example.com"}

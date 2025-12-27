@@ -26,7 +26,14 @@ class _ConfigWrapper:
     def __init__(self, data: dict[str, str | None]):
         self.litellm_base_url = data.get("litellm_base_url")
         self.litellm_api_key = data.get("litellm_api_key")
+        self.default_pricing_profile = data.get("default_pricing_profile")
+        self._default_pricing_override = data.get("default_pricing_override") or {}
         self.sync_interval_seconds = None
+
+    @property
+    def default_pricing_override_dict(self) -> dict:
+        """Match Config.default_pricing_override_dict interface."""
+        return dict(self._default_pricing_override)
 
 
 class SyncWorker:
@@ -75,6 +82,8 @@ class SyncWorker:
                 config_snapshot = {
                     "litellm_base_url": config_obj.litellm_base_url,
                     "litellm_api_key": config_obj.litellm_api_key,
+                    "default_pricing_profile": config_obj.default_pricing_profile,
+                    "default_pricing_override": config_obj.default_pricing_override_dict,
                 }
 
                 # Check if sync is enabled
