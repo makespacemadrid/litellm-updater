@@ -519,7 +519,7 @@ async def create_compat_model(
         first_seen=datetime.now(UTC),
         last_seen=datetime.now(UTC),
         is_orphaned=False,
-        user_modified=True,
+        user_modified=False,  # Only set to True when user actually modifies the model
         sync_enabled=True,
     )
 
@@ -568,6 +568,11 @@ async def update_compat_model(
         model.access_groups_list = normalize_tags(access_groups)
     if ollama_mode_provided:
         model.ollama_mode = ollama_mode
+
+    # Mark as user modified if any changes were made
+    if (mapped_provider_id is not None or mapped_model_id is not None or
+        params is not None or access_groups is not None or ollama_mode_provided):
+        model.user_modified = True
 
     model.updated_at = datetime.now(UTC)
     return model
