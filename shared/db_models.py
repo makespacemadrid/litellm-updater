@@ -31,6 +31,7 @@ class Provider(Base):
     pricing_override: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON object
     sync_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sync_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Override global sync interval (0 = use global)
+    max_requests_per_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_detect_fim: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     model_filter: Mapped[str | None] = mapped_column(String, nullable=True)  # Include substring filter for model names
     model_filter_exclude: Mapped[str | None] = mapped_column(String, nullable=True)  # Exclude substring filter for model names
@@ -338,6 +339,12 @@ class Model(Base):
             return self.provider.access_groups_list
         return []
 
+    def get_display_name(self, apply_prefix: bool = True) -> str:
+        """Return model name with optional provider prefix."""
+        if apply_prefix and self.provider and self.provider.prefix:
+            return f"{self.provider.prefix}/{self.model_id}"
+        return self.model_id
+
 
 class RoutingGroup(Base):
     """Named routing group with ordered model targets."""
@@ -360,9 +367,6 @@ class RoutingGroup(Base):
 
     targets: Mapped[list["RoutingTarget"]] = relationship(
         "RoutingTarget", back_populates="group", cascade="all, delete-orphan"
-    )
-    provider_limits: Mapped[list["RoutingProviderLimit"]] = relationship(
-        "RoutingProviderLimit", back_populates="group", cascade="all, delete-orphan"
     )
 
     @property
@@ -411,39 +415,3 @@ class RoutingTarget(Base):
         UniqueConstraint("group_id", "provider_id", "model_id", name="uq_routing_target"),
     )
 
-
-class RoutingProviderLimit(Base):
-    """Per-provider rate limit for a routing group."""
-
-    __tablename__ = "routing_provider_limits"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    group_id: Mapped[int] = mapped_column(
-        ForeignKey("routing_groups.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    provider_id: Mapped[int] = mapped_column(
-        ForeignKey("providers.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    max_requests_per_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(UTC), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-        nullable=False,
-    )
-
-    group: Mapped["RoutingGroup"] = relationship("RoutingGroup", back_populates="provider_limits")
-    provider: Mapped["Provider"] = relationship("Provider")
-
-    __table_args__ = (
-        UniqueConstraint("group_id", "provider_id", name="uq_routing_provider_limit"),
-    )
-
-    def get_display_name(self, apply_prefix: bool = True) -> str:
-        """Return model name with optional provider prefix."""
-        if apply_prefix and self.provider and self.provider.prefix:
-            return f"{self.provider.prefix}/{self.model_id}"
-        return self.model_id

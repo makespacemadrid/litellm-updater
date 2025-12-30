@@ -62,6 +62,16 @@ def _parse_pricing_override(input_cost: str | None, output_cost: str | None) -> 
     return pricing or None
 
 
+def _parse_optional_int(raw: str | int | None) -> int | None:
+    """Parse optional integer inputs."""
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("")
 @router.get("/")
 async def list_providers(session: AsyncSession = Depends(get_session)):
@@ -83,6 +93,7 @@ async def list_providers(session: AsyncSession = Depends(get_session)):
             "access_groups": p.access_groups_list,
             "sync_enabled": p.sync_enabled,
             "sync_interval_seconds": p.sync_interval_seconds,
+            "max_requests_per_hour": p.max_requests_per_hour,
             "pricing_profile": p.pricing_profile,
             "pricing_override": p.pricing_override_dict,
             "created_at": p.created_at.isoformat(),
@@ -308,6 +319,7 @@ async def add_provider(
     access_groups: str | None = Form(None),
     sync_enabled: bool | None = Form(True),
     sync_interval_seconds: int | None = Form(None),
+    max_requests_per_hour: str | None = Form(None),
     auto_detect_fim: bool | None = Form(True),
     pricing_profile: str | None = Form(None),
     pricing_input_cost_per_token: str | None = Form(None),
@@ -335,6 +347,7 @@ async def add_provider(
         access_groups=_parse_csv_list(access_groups),
         sync_enabled=sync_enabled_val,
         sync_interval_seconds=sync_interval_seconds,
+        max_requests_per_hour=_parse_optional_int(max_requests_per_hour),
         auto_detect_fim=auto_detect_fim_val,
         pricing_profile=_normalize_optional_str(pricing_profile),
         pricing_override=_parse_pricing_override(
@@ -402,6 +415,7 @@ async def update_provider_endpoint(
     access_groups: str | None = Form(None),
     sync_enabled: bool | None = Form(None),
     sync_interval_seconds: int | None = Form(None),
+    max_requests_per_hour: str | None = Form(None),
     auto_detect_fim: bool | None = Form(None),
     pricing_profile: str | None = Form(None),
     pricing_input_cost_per_token: str | None = Form(None),
@@ -428,6 +442,7 @@ async def update_provider_endpoint(
         access_groups=_parse_csv_list(access_groups),
         sync_enabled=_parse_bool(sync_enabled),
         sync_interval_seconds=sync_interval_seconds,
+        max_requests_per_hour=_parse_optional_int(max_requests_per_hour),
         auto_detect_fim=_parse_bool(auto_detect_fim),
         pricing_profile=_normalize_optional_str(pricing_profile),
         pricing_override=_parse_pricing_override(

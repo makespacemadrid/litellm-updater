@@ -1,0 +1,664 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+  .routing-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 20px;
+  }
+  .group-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .group-list button {
+    width: 100%;
+  }
+  .group-card {
+    background: #242424;
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .group-card.active {
+    border-color: #4a9eff;
+    box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.15);
+  }
+  .group-card h4 {
+    margin: 0 0 6px;
+  }
+  .group-card p {
+    margin: 0;
+    color: #aaa;
+    font-size: 12px;
+  }
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #1e3a5f;
+    color: #9cc8ff;
+    font-size: 11px;
+    margin-right: 6px;
+    margin-top: 6px;
+  }
+  .targets-table,
+  .limits-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+  }
+  .targets-table th,
+  .limits-table th {
+    text-align: left;
+    padding: 10px;
+    background: #242424;
+    border-bottom: 1px solid #333;
+  }
+  .targets-table td,
+  .limits-table td {
+    padding: 10px;
+    border-bottom: 1px solid #2a2a2a;
+    vertical-align: middle;
+  }
+  .inline {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .muted {
+    color: #888;
+    font-size: 13px;
+  }
+  .btn-secondary {
+    background: #333;
+  }
+  .btn-secondary:hover {
+    background: #444;
+  }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid #333;
+  }
+  .btn-ghost:hover {
+    background: #2a2a2a;
+  }
+  .capabilities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .capabilities label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #242424;
+    border: 1px solid #333;
+    font-size: 12px;
+  }
+  .section-title {
+    margin: 0 0 8px;
+  }
+  .status-note {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #9a9a9a;
+  }
+</style>
+
+<div class="panel">
+  <h2>Routing Groups</h2>
+  <p class="muted">
+    Configure ordered model groups. Build HA groups by putting self-hosted targets first
+    and external fallbacks later.
+  </p>
+</div>
+
+<div class="routing-layout">
+  <div class="panel">
+    <div class="group-list">
+      <button onclick="createNewGroup()">+ New Group</button>
+      <button class="btn-secondary" onclick="pushAllGroups()">Push All to LiteLLM</button>
+      <div id="group-list"></div>
+      <div style="margin-top: 16px;">
+        <h4 class="section-title">LiteLLM Only</h4>
+        <div id="litellm-only" class="muted"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="inline" style="justify-content: space-between;">
+      <h3 id="editor-title">Select a group</h3>
+      <div class="inline">
+        <button class="btn-secondary" onclick="deleteGroup()">Delete</button>
+        <button class="btn-ghost" onclick="pushGroup()">Push Group</button>
+        <button onclick="saveGroup()">Save</button>
+      </div>
+    </div>
+
+    <div id="editor-body" style="display: none;">
+      <div class="split">
+        <div>
+          <label>Group Name
+            <input id="group-name" type="text" placeholder="e.g. ha-qwen3-30b" />
+          </label>
+        </div>
+        <div>
+          <label>Description
+            <input id="group-description" type="text" placeholder="Optional summary" />
+          </label>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px;">
+        <h4 class="section-title">Capabilities Filter</h4>
+        <div class="capabilities" id="capability-options"></div>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <h4 class="section-title">Targets (ordered)</h4>
+        <div class="inline">
+          <input id="candidate-search" type="text" placeholder="Search provider/model" />
+          <select id="candidate-provider"></select>
+          <select id="candidate-select"></select>
+          <button class="btn-ghost" onclick="addTarget()">Add Target</button>
+        </div>
+        <table class="targets-table">
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Target</th>
+              <th>Weight</th>
+              <th>Enabled</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="targets-body"></tbody>
+        </table>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <div class="inline" style="justify-content: space-between;">
+          <h4 class="section-title">LiteLLM State</h4>
+          <button class="btn-ghost" onclick="refreshLiteLLM()">Refresh LiteLLM</button>
+        </div>
+        <div id="litellm-summary" class="status-note">LiteLLM status not loaded.</div>
+        <div id="litellm-missing" class="status-note"></div>
+        <div id="litellm-extra" class="status-note"></div>
+        <table class="targets-table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Model</th>
+              <th>Created By</th>
+              <th>LiteLLM ID</th>
+            </tr>
+          </thead>
+          <tbody id="litellm-targets-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const state = {
+    groups: [],
+    providers: [],
+    candidates: [],
+    currentGroup: null,
+    routingStatus: null,
+    routingStatusMap: {},
+  };
+
+  const capabilityCatalog = [
+    "chat",
+    "tools",
+    "function-calling",
+    "vision",
+    "embedding",
+    "audio",
+    "moderation",
+    "classification",
+    "thinking",
+  ];
+
+  function normalizeCapability(value) {
+    return value.trim().toLowerCase().replace(/\s+/g, "-");
+  }
+
+  function selectedCapabilities() {
+    const selected = [];
+    document.querySelectorAll("#capability-options input[type=checkbox]").forEach((checkbox) => {
+      if (checkbox.checked) {
+        selected.push(checkbox.value);
+      }
+    });
+    return selected;
+  }
+
+  async function loadProviders() {
+    const res = await fetch("/api/providers");
+    state.providers = await res.json();
+    renderProviderOptions();
+  }
+
+  async function loadGroups() {
+    const res = await fetch("/api/routing-groups");
+    state.groups = await res.json();
+    renderGroupList();
+  }
+
+  async function loadLiteLLMStatus() {
+    const summary = document.getElementById("litellm-summary");
+    try {
+      const res = await fetch("/api/routing-groups/status");
+      if (!res.ok) {
+        const errorText = await res.text();
+        summary.textContent = `LiteLLM status error: ${errorText}`;
+        return;
+      }
+      state.routingStatus = await res.json();
+      state.routingStatusMap = {};
+      state.routingStatus.groups.forEach((group) => {
+        state.routingStatusMap[group.name] = group;
+      });
+      renderGroupList();
+      renderLiteLLMOnly();
+      renderLiteLLMStatus();
+    } catch (error) {
+      summary.textContent = `LiteLLM status error: ${error}`;
+    }
+  }
+
+  async function loadGroup(id) {
+    const res = await fetch(`/api/routing-groups/${id}`);
+    state.currentGroup = await res.json();
+    renderEditor();
+  }
+
+  async function loadCandidates() {
+    const caps = selectedCapabilities().join(",");
+    const query = document.getElementById("candidate-search").value.trim();
+    const url = new URL("/api/routing-groups/candidates", window.location.origin);
+    if (caps) url.searchParams.set("capabilities", caps);
+    if (query) url.searchParams.set("query", query);
+    const res = await fetch(url);
+    state.candidates = await res.json();
+    renderCandidateOptions();
+  }
+
+  function renderGroupList() {
+    const container = document.getElementById("group-list");
+    if (!state.groups.length) {
+      container.innerHTML = '<p class="muted">No routing groups yet.</p>';
+      return;
+    }
+    container.innerHTML = "";
+    state.groups.forEach((group) => {
+      const status = state.routingStatusMap[group.name];
+      let statusLine = "";
+      if (status) {
+        statusLine = `DB ${status.db_count} · LiteLLM ${status.litellm_count}`;
+        if (status.missing_in_litellm.length || status.extra_in_litellm.length) {
+          statusLine += ` · Missing ${status.missing_in_litellm.length} · Extra ${status.extra_in_litellm.length}`;
+        }
+      }
+      const card = document.createElement("div");
+      card.className = "group-card" + (state.currentGroup && group.id === state.currentGroup.id ? " active" : "");
+      card.onclick = () => loadGroup(group.id);
+      card.innerHTML = `
+        <h4>${group.name}</h4>
+        <p>${group.description || "No description"}</p>
+        ${statusLine ? `<p class="muted">${statusLine}</p>` : ""}
+      `;
+      container.appendChild(card);
+    });
+  }
+
+  function renderEditor() {
+    const editor = document.getElementById("editor-body");
+    if (!state.currentGroup) {
+      editor.style.display = "none";
+      document.getElementById("editor-title").textContent = "Select a group";
+      return;
+    }
+
+    editor.style.display = "block";
+    document.getElementById("editor-title").textContent = `Editing ${state.currentGroup.name}`;
+    document.getElementById("group-name").value = state.currentGroup.name;
+    document.getElementById("group-description").value = state.currentGroup.description || "";
+
+    renderCapabilityOptions();
+    renderTargets();
+    renderLiteLLMStatus();
+    loadCandidates();
+  }
+
+  function renderCapabilityOptions() {
+    const container = document.getElementById("capability-options");
+    const selected = new Set(state.currentGroup.capabilities || []);
+    container.innerHTML = "";
+    capabilityCatalog.forEach((cap) => {
+      const label = document.createElement("label");
+      label.innerHTML = `
+        <input type="checkbox" value="${cap}" ${selected.has(cap) ? "checked" : ""} />
+        ${cap}
+      `;
+      label.querySelector("input").addEventListener("change", () => {
+        loadCandidates();
+      });
+      container.appendChild(label);
+    });
+  }
+
+  function renderProviderOptions() {
+    const providerSelect = document.getElementById("candidate-provider");
+    providerSelect.innerHTML = `<option value="">All providers</option>`;
+    state.providers.forEach((provider) => {
+      const option = document.createElement("option");
+      option.value = provider.id;
+      option.textContent = provider.name;
+      providerSelect.appendChild(option);
+    });
+    providerSelect.addEventListener("change", renderCandidateOptions);
+  }
+
+  function renderCandidateOptions() {
+    const providerFilter = document.getElementById("candidate-provider").value;
+    const select = document.getElementById("candidate-select");
+    select.innerHTML = "";
+    const filtered = state.candidates.filter((candidate) => {
+      if (providerFilter && String(candidate.provider_id) !== providerFilter) {
+        return false;
+      }
+      return true;
+    });
+
+    if (!filtered.length) {
+      const option = document.createElement("option");
+      option.textContent = "No candidates";
+      option.value = "";
+      select.appendChild(option);
+      return;
+    }
+
+    filtered.forEach((candidate) => {
+      const option = document.createElement("option");
+      option.value = `${candidate.provider_id}::${candidate.model_id}`;
+      option.textContent = `${candidate.provider_name} / ${candidate.model_id}`;
+      select.appendChild(option);
+    });
+  }
+
+  function renderTargets() {
+    const body = document.getElementById("targets-body");
+    if (!state.currentGroup) {
+      body.innerHTML = "";
+      return;
+    }
+    body.innerHTML = "";
+    const targets = state.currentGroup.targets || [];
+    targets.forEach((target, index) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${index + 1}</td>
+        <td>${target.provider_name || target.provider_id} / ${target.model_id}</td>
+        <td><input type="number" min="1" step="1" value="${target.weight}" data-target-index="${index}" class="weight-input" /></td>
+        <td><input type="checkbox" ${target.enabled ? "checked" : ""} data-target-index="${index}" class="enabled-input" /></td>
+        <td>
+          <div class="inline">
+            <button class="btn-secondary" onclick="moveTarget(${index}, -1)">↑</button>
+            <button class="btn-secondary" onclick="moveTarget(${index}, 1)">↓</button>
+            <button class="btn-ghost" onclick="removeTarget(${index})">Remove</button>
+          </div>
+        </td>
+      `;
+      body.appendChild(row);
+    });
+  }
+
+  function renderLiteLLMOnly() {
+    const container = document.getElementById("litellm-only");
+    if (!state.routingStatus) {
+      container.textContent = "LiteLLM data not loaded.";
+      return;
+    }
+    if (!state.routingStatus.litellm_only.length) {
+      container.textContent = "None.";
+      return;
+    }
+    container.innerHTML = "";
+    state.routingStatus.litellm_only.forEach((group) => {
+      const item = document.createElement("div");
+      item.className = "muted";
+      item.textContent = `${group.name} (LiteLLM: ${group.litellm_count})`;
+      container.appendChild(item);
+    });
+  }
+
+  function renderLiteLLMStatus() {
+    const summary = document.getElementById("litellm-summary");
+    const missingEl = document.getElementById("litellm-missing");
+    const extraEl = document.getElementById("litellm-extra");
+    const body = document.getElementById("litellm-targets-body");
+
+    if (!state.currentGroup) {
+      summary.textContent = "Select a group to view LiteLLM state.";
+      missingEl.textContent = "";
+      extraEl.textContent = "";
+      body.innerHTML = "";
+      return;
+    }
+
+    const status = state.routingStatusMap[state.currentGroup.name];
+    if (!status) {
+      summary.textContent = "LiteLLM status not loaded.";
+      missingEl.textContent = "";
+      extraEl.textContent = "";
+      body.innerHTML = "";
+      return;
+    }
+
+    summary.textContent = `DB targets (enabled): ${status.db_count} · LiteLLM deployments: ${status.litellm_count}`;
+
+    if (status.missing_in_litellm.length) {
+      const missingList = status.missing_in_litellm
+        .map((item) => `${item.provider_name || "unknown"} / ${item.model_id}`)
+        .join(", ");
+      missingEl.textContent = `Missing in LiteLLM: ${missingList}`;
+    } else {
+      missingEl.textContent = "";
+    }
+
+    if (status.extra_in_litellm.length) {
+      const extraList = status.extra_in_litellm
+        .map((item) => `${item.provider || "unknown"} / ${item.model_id || item.model_name || "unknown"}`)
+        .join(", ");
+      extraEl.textContent = `Extra in LiteLLM: ${extraList}`;
+    } else {
+      extraEl.textContent = "";
+    }
+
+    body.innerHTML = "";
+    status.litellm_targets.forEach((target) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${target.provider || "unknown"}</td>
+        <td>${target.model_id || target.model_name || "unknown"}</td>
+        <td>${target.created_by || "unknown"}</td>
+        <td>${target.model_info_id || "unknown"}</td>
+      `;
+      body.appendChild(row);
+    });
+  }
+
+  function moveTarget(index, direction) {
+    const targets = state.currentGroup.targets || [];
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= targets.length) return;
+    const [item] = targets.splice(index, 1);
+    targets.splice(nextIndex, 0, item);
+    state.currentGroup.targets = targets;
+    renderTargets();
+  }
+
+  function removeTarget(index) {
+    state.currentGroup.targets.splice(index, 1);
+    renderTargets();
+  }
+
+  function addTarget() {
+    if (!state.currentGroup) return;
+    const select = document.getElementById("candidate-select");
+    const value = select.value;
+    if (!value) return;
+    const [providerId, modelId] = value.split("::");
+    const candidate = state.candidates.find(
+      (c) => String(c.provider_id) === providerId && c.model_id === modelId
+    );
+    if (!candidate) return;
+    state.currentGroup.targets = state.currentGroup.targets || [];
+    state.currentGroup.targets.push({
+      provider_id: candidate.provider_id,
+      provider_name: candidate.provider_name,
+      provider_type: candidate.provider_type,
+      model_id: candidate.model_id,
+      weight: 1,
+      priority: state.currentGroup.targets.length,
+      enabled: true,
+    });
+    renderTargets();
+  }
+
+  function createNewGroup() {
+    state.currentGroup = {
+      id: null,
+      name: "",
+      description: "",
+      capabilities: [],
+      targets: [],
+    };
+    renderGroupList();
+    renderEditor();
+  }
+
+  async function saveGroup() {
+    if (!state.currentGroup) return;
+    const name = document.getElementById("group-name").value.trim();
+    if (!name) {
+      alert("Group name is required.");
+      return;
+    }
+    const description = document.getElementById("group-description").value.trim();
+    const caps = selectedCapabilities().map(normalizeCapability);
+
+    const targets = (state.currentGroup.targets || []).map((target, index) => {
+      const weightInput = document.querySelector(`input.weight-input[data-target-index="${index}"]`);
+      const enabledInput = document.querySelector(`input.enabled-input[data-target-index="${index}"]`);
+      return {
+        provider_id: target.provider_id,
+        model_id: target.model_id,
+        weight: parseInt(weightInput.value || "1", 10),
+        priority: index + 1,
+        enabled: enabledInput.checked,
+      };
+    });
+
+    const payload = {
+      name,
+      description: description || null,
+      capabilities: caps,
+      targets,
+    };
+
+    const method = state.currentGroup.id ? "PUT" : "POST";
+    const url = state.currentGroup.id
+      ? `/api/routing-groups/${state.currentGroup.id}`
+      : "/api/routing-groups";
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const error = await res.text();
+      alert(`Failed to save: ${error}`);
+      return;
+    }
+    const saved = await res.json();
+    state.currentGroup = saved;
+    await loadGroups();
+    await loadLiteLLMStatus();
+    renderGroupList();
+    renderEditor();
+  }
+
+  async function deleteGroup() {
+    if (!state.currentGroup || !state.currentGroup.id) return;
+    if (!confirm(`Delete routing group "${state.currentGroup.name}"?`)) return;
+    const res = await fetch(`/api/routing-groups/${state.currentGroup.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      alert("Failed to delete routing group.");
+      return;
+    }
+    state.currentGroup = null;
+    await loadGroups();
+    await loadLiteLLMStatus();
+    renderGroupList();
+    renderEditor();
+  }
+
+  async function pushGroup() {
+    if (!state.currentGroup || !state.currentGroup.id) return;
+    const res = await fetch(`/api/routing-groups/${state.currentGroup.id}/push`, { method: "POST" });
+    if (!res.ok) {
+      const error = await res.text();
+      alert(`Push failed: ${error}`);
+      return;
+    }
+    const payload = await res.json();
+    await loadLiteLLMStatus();
+    alert(`Pushed group. Added: ${payload.stats.added}, deleted: ${payload.stats.deleted}`);
+  }
+
+  async function pushAllGroups() {
+    const res = await fetch(`/api/routing-groups/push`, { method: "POST" });
+    if (!res.ok) {
+      const error = await res.text();
+      alert(`Push failed: ${error}`);
+      return;
+    }
+    const payload = await res.json();
+    await loadLiteLLMStatus();
+    alert(`Pushed ${payload.stats.groups} groups. Added: ${payload.stats.added}, deleted: ${payload.stats.deleted}`);
+  }
+
+  async function refreshLiteLLM() {
+    await loadLiteLLMStatus();
+  }
+
+  document.getElementById("candidate-search").addEventListener("input", () => {
+    loadCandidates();
+  });
+
+  loadProviders().then(async () => {
+    await loadGroups();
+    await loadLiteLLMStatus();
+  });
+</script>
+
+{% endblock %}

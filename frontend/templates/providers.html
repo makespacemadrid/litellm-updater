@@ -217,13 +217,14 @@
     <table class="providers-table" id="providersTable">
         <thead>
             <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Base URL</th>
-                <th>Model Filter</th>
-                <th>Sync</th>
-                <th>Interval</th>
-                <th>Actions</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Base URL</th>
+            <th>Model Filter</th>
+            <th>Sync</th>
+            <th>Interval</th>
+            <th>Rate Limit</th>
+            <th>Actions</th>
             </tr>
         </thead>
         <tbody id="providersTableBody">
@@ -294,6 +295,12 @@
                 <label>Sync Interval (seconds)</label>
                 <input type="number" id="preset_sync_interval" name="sync_interval_seconds" min="0">
                 <div class="help-text">How often to sync (0 = use global default, recommended: <span id="preset_recommended_interval"></span>s)</div>
+            </div>
+
+            <div class="form-group">
+                <label>Max Requests / Hour</label>
+                <input type="number" id="preset_max_requests" name="max_requests_per_hour" min="0">
+                <div class="help-text">Leave empty for no rate limit</div>
             </div>
 
             <div class="form-group checkbox-group">
@@ -376,6 +383,12 @@
                 <div class="help-text">0 = use global default</div>
             </div>
 
+            <div class="form-group">
+                <label>Max Requests / Hour</label>
+                <input type="number" id="edit_max_requests" name="max_requests_per_hour" min="0">
+                <div class="help-text">Leave empty for no rate limit</div>
+            </div>
+
             <div class="form-group checkbox-group">
                 <input type="checkbox" id="edit_sync_enabled" name="sync_enabled">
                 <label for="edit_sync_enabled" style="margin-bottom: 0;">Enable automatic sync</label>
@@ -444,6 +457,12 @@
                 <div class="help-text">0 = use global default</div>
             </div>
 
+            <div class="form-group">
+                <label>Max Requests / Hour</label>
+                <input type="number" name="max_requests_per_hour" min="0">
+                <div class="help-text">Leave empty for no rate limit</div>
+            </div>
+
             <div class="form-group checkbox-group">
                 <input type="checkbox" name="sync_enabled" checked>
                 <label style="margin-bottom: 0;">Enable automatic sync</label>
@@ -509,7 +528,7 @@
     function renderProviders() {
         const tbody = document.getElementById('providersTableBody');
         if (providers.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No providers configured. Add one from the free tier presets above!</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No providers configured. Add one from the free tier presets above!</td></tr>';
             return;
         }
 
@@ -529,6 +548,7 @@
                     </td>
                     <td><span class="badge ${provider.sync_enabled ? 'enabled' : 'disabled'}">${provider.sync_enabled ? 'enabled' : 'disabled'}</span></td>
                     <td class="interval-display">${intervalDisplay}</td>
+                    <td>${provider.max_requests_per_hour ?? '<span style="color: #888;">unlimited</span>'}</td>
                     <td class="actions">
                         ${provider.type !== 'compat' ? `<button class="btn-primary btn-small" onclick="pullProvider(${provider.id})">Pull</button>` : ''}
                         <button class="btn-success btn-small" onclick="pushProvider(${provider.id})">Push</button>
@@ -565,6 +585,7 @@
         document.getElementById('preset_model_filter_exclude').value = preset.model_filter_exclude || '';
         document.getElementById('preset_sync_interval').value = preset.sync_interval_seconds || 0;
         document.getElementById('preset_recommended_interval').textContent = preset.sync_interval_seconds || 0;
+        document.getElementById('preset_max_requests').value = preset.max_requests_per_hour || '';
 
         // Show/hide API key banner and update fields
         const banner = document.getElementById('preset_api_key_banner');
@@ -649,6 +670,7 @@
         document.getElementById('edit_ollama_mode').value = provider.default_ollama_mode || '';
         document.getElementById('edit_sync_interval').value = provider.sync_interval_seconds || 0;
         document.getElementById('edit_sync_enabled').checked = provider.sync_enabled;
+        document.getElementById('edit_max_requests').value = provider.max_requests_per_hour || '';
 
         openModal('editProviderModal');
     }

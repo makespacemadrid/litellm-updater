@@ -5,7 +5,7 @@ import httpx
 from shared.models import ModelMetadata
 from shared.pricing_profiles import apply_pricing_overrides
 from shared.sources import _make_auth_headers, DEFAULT_TIMEOUT
-from shared.tags import generate_model_tags
+from shared.tags import generate_model_tags, normalize_tags
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,57 @@ async def fetch_litellm_models(client: httpx.AsyncClient, base_url: str, api_key
         raise
 
 
+def _collect_litellm_tags(model: dict) -> list[str]:
+    """Collect tags across LiteLLM payload fields."""
+    tags = model.get("litellm_params", {}).get("tags", [])
+    model_info_tags = model.get("model_info", {}).get("tags", [])
+    root_tags = model.get("tags", [])
+    combined = list(tags or []) + list(model_info_tags or []) + list(root_tags or [])
+    return [str(tag).lower() for tag in combined if tag is not None]
+
+
+def _extract_tag_value(tags: list[str], prefix: str) -> str | None:
+    """Extract the first tag value for a prefix."""
+    for tag in tags:
+        if tag.startswith(prefix):
+            return tag[len(prefix):]
+    return None
+
+
+async def list_routing_group_deployments(config) -> list[dict]:
+    """Return LiteLLM models tagged as routing groups."""
+    if not config.litellm_base_url:
+        return []
+
+    entries: list[dict] = []
+    async with httpx.AsyncClient() as client:
+        litellm_models = await fetch_litellm_models(
+            client,
+            config.litellm_base_url,
+            config.litellm_api_key,
+        )
+
+    for model in litellm_models:
+        tags = _collect_litellm_tags(model)
+        group_tag = next((tag for tag in tags if tag.startswith("routing_group:")), None)
+        if not group_tag:
+            continue
+        group_name = group_tag.split(":", 1)[1]
+        entries.append(
+            {
+                "group": group_name,
+                "provider": _extract_tag_value(tags, "provider:") or "",
+                "model_id": _extract_tag_value(tags, "model:") or "",
+                "model_name": model.get("model_name"),
+                "model_info_id": model.get("model_info", {}).get("id"),
+                "created_by": model.get("model_info", {}).get("created_by"),
+                "tags": tags,
+            }
+        )
+
+    return entries
+
+
 async def push_model_to_litellm(
     client: httpx.AsyncClient,
     base_url: str,
@@ -187,6 +238,10 @@ async def push_model_to_litellm(
     model,
     config=None,
     session=None,
+    model_name_override: str | None = None,
+    extra_tags: list[str] | None = None,
+    created_by: str = "updater",
+    strip_unique_id: bool = False,
 ):
     """Push a single model to LiteLLM."""
     # Build litellm_params
@@ -291,6 +346,13 @@ async def push_model_to_litellm(
             tags = [t for t in tags if t != "capability:completion"]
             tags.append("mode:chat")
 
+    if strip_unique_id:
+        tags = [t for t in tags if not t.startswith("unique_id:")]
+
+    if extra_tags:
+        tags.extend(normalize_tags(extra_tags))
+        tags = normalize_tags(tags)
+
     litellm_params["tags"] = tags
     model_info["tags"] = tags
 
@@ -302,11 +364,11 @@ async def push_model_to_litellm(
     # Mark as created/updated by updater with timestamp
     from datetime import datetime, UTC
     current_time = datetime.now(UTC)
-    model_info["created_by"] = "updater"
+    model_info["created_by"] = created_by
     model_info["updated_at"] = current_time.isoformat()
 
     # Build display name
-    display_name = model.get_display_name(apply_prefix=True)
+    display_name = model_name_override or model.get_display_name(apply_prefix=True)
 
     # Push to LiteLLM
     url = f"{base_url.rstrip('/')}/model/new"
@@ -571,3 +633,88 @@ def _merge_pricing_fields(target: dict, source: dict) -> None:
             continue
         if "cost" in key or key == "tiered_pricing":
             target[key] = value
+
+
+async def push_routing_groups_to_litellm(session, config, group_id: int | None = None) -> dict:
+    """Push routing groups to LiteLLM as model groups."""
+    if not config.litellm_base_url:
+        raise RuntimeError("LiteLLM destination not configured")
+
+    from shared.crud import get_routing_groups, get_routing_group, get_model_by_provider_and_name, get_provider_by_id
+
+    if group_id is None:
+        groups = await get_routing_groups(session)
+        groups = [await get_routing_group(session, g.id) for g in groups]
+    else:
+        group = await get_routing_group(session, group_id)
+        groups = [group] if group else []
+
+    groups = [g for g in groups if g is not None]
+    stats = {"groups": len(groups), "added": 0, "deleted": 0, "missing_models": 0, "errors": 0}
+
+    async with httpx.AsyncClient() as client:
+        litellm_models = await fetch_litellm_models(client, config.litellm_base_url, config.litellm_api_key)
+
+        for group in groups:
+            group_tag = f"routing_group:{group.name}"
+            group_tag_lower = group_tag.lower()
+
+            for m in litellm_models:
+                tags = m.get("litellm_params", {}).get("tags", [])
+                model_info_tags = m.get("model_info", {}).get("tags", [])
+                root_tags = m.get("tags", [])
+                combined_tags = [str(t).lower() for t in (tags or []) + (model_info_tags or []) + (root_tags or [])]
+                if group_tag_lower not in combined_tags:
+                    continue
+                if m.get("model_info", {}).get("created_by") != "routing_group":
+                    continue
+                model_id = m.get("model_info", {}).get("id")
+                if not model_id:
+                    continue
+                try:
+                    await delete_model_from_litellm(
+                        client,
+                        config.litellm_base_url,
+                        config.litellm_api_key,
+                        model_id,
+                    )
+                    stats["deleted"] += 1
+                except Exception as exc:
+                    stats["errors"] += 1
+                    logger.warning("Failed deleting routing group entry %s: %s", model_id, exc)
+
+            for target in sorted(group.targets, key=lambda t: (t.priority, t.id)):
+                provider = target.provider or await get_provider_by_id(session, target.provider_id)
+                if not provider:
+                    stats["missing_models"] += 1
+                    continue
+                model = await get_model_by_provider_and_name(session, provider.id, target.model_id)
+                if not model:
+                    stats["missing_models"] += 1
+                    continue
+                try:
+                    await push_model_to_litellm(
+                        client,
+                        config.litellm_base_url,
+                        config.litellm_api_key,
+                        provider,
+                        model,
+                        config=config,
+                        session=session,
+                        model_name_override=group.name,
+                        extra_tags=[group_tag],
+                        created_by="routing_group",
+                        strip_unique_id=True,
+                    )
+                    stats["added"] += 1
+                except Exception as exc:
+                    stats["errors"] += 1
+                    logger.warning(
+                        "Failed pushing routing target %s/%s for group %s: %s",
+                        provider.name,
+                        model.model_id,
+                        group.name,
+                        exc,
+                    )
+
+    return stats

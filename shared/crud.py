@@ -2,18 +2,11 @@
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .db_models import (
-    Config,
-    Model,
-    Provider,
-    RoutingGroup,
-    RoutingTarget,
-    RoutingProviderLimit,
-)
+from .db_models import Config, Model, Provider, RoutingGroup, RoutingTarget
 from .models import ModelMetadata, SourceEndpoint
 from .pricing_profiles import apply_pricing_overrides
 from .tags import generate_model_tags, normalize_tags
@@ -122,6 +115,7 @@ async def create_provider(
     auto_detect_fim: bool = True,
     model_filter: str | None = None,
     model_filter_exclude: str | None = None,
+    max_requests_per_hour: int | None = None,
 ) -> Provider:
     """Create a new provider."""
     if type_ == "ollama" and default_ollama_mode is None:
@@ -140,6 +134,7 @@ async def create_provider(
         auto_detect_fim=auto_detect_fim,
         model_filter=model_filter,
         model_filter_exclude=model_filter_exclude,
+        max_requests_per_hour=max_requests_per_hour,
     )
     provider.tags_list = normalize_tags(tags)
     provider.access_groups_list = normalize_tags(access_groups)
@@ -181,6 +176,7 @@ async def update_provider(
     pricing_override: dict | None = None,
     auto_detect_fim: bool | None = None,
     model_filter_exclude: str | None = None,
+    max_requests_per_hour: int | None = None,
 ) -> Provider:
     """Update existing provider."""
     if name is not None:
@@ -201,6 +197,8 @@ async def update_provider(
         provider.model_filter = model_filter
     if model_filter_exclude is not None:
         provider.model_filter_exclude = model_filter_exclude
+    if max_requests_per_hour is not None:
+        provider.max_requests_per_hour = max_requests_per_hour
     if tags is not None:
         provider.tags_list = normalize_tags(tags)
     if access_groups is not None:
@@ -638,8 +636,7 @@ async def get_routing_group(
     query = select(RoutingGroup).where(RoutingGroup.id == group_id)
     if include_children:
         query = query.options(
-            selectinload(RoutingGroup.targets).selectinload(RoutingTarget.provider),
-            selectinload(RoutingGroup.provider_limits).selectinload(RoutingProviderLimit.provider),
+            selectinload(RoutingGroup.targets).selectinload(RoutingTarget.provider)
         )
     result = await session.execute(query)
     return result.scalar_one_or_none()
@@ -701,38 +698,12 @@ def _build_routing_targets(
     return built
 
 
-def _build_provider_limits(
-    group_id: int, limits: list[dict]
-) -> list[RoutingProviderLimit]:
-    """Build RoutingProviderLimit rows from payload."""
-    built: list[RoutingProviderLimit] = []
-    for limit in limits:
-        raw_limit = limit.get("max_requests_per_hour")
-        max_requests = int(raw_limit) if raw_limit not in (None, "") else None
-        built.append(
-            RoutingProviderLimit(
-                group_id=group_id,
-                provider_id=int(limit["provider_id"]),
-                max_requests_per_hour=max_requests,
-            )
-        )
-    return built
-
-
 async def replace_routing_targets(
     session: AsyncSession, group: RoutingGroup, targets: list[dict]
 ) -> RoutingGroup:
     """Replace routing targets for a group."""
-    group.targets = _build_routing_targets(group.id, targets)
-    group.updated_at = datetime.now(UTC)
-    return group
-
-
-async def replace_provider_limits(
-    session: AsyncSession, group: RoutingGroup, limits: list[dict]
-) -> RoutingGroup:
-    """Replace provider limits for a group."""
-    group.provider_limits = _build_provider_limits(group.id, limits)
+    await session.execute(delete(RoutingTarget).where(RoutingTarget.group_id == group.id))
+    session.add_all(_build_routing_targets(group.id, targets))
     group.updated_at = datetime.now(UTC)
     return group
 
@@ -785,10 +756,7 @@ async def compile_routing_groups(session: AsyncSession) -> list[dict]:
     """Compile routing groups into a proxy-friendly payload."""
     result = await session.execute(
         select(RoutingGroup)
-        .options(
-            selectinload(RoutingGroup.targets).selectinload(RoutingTarget.provider),
-            selectinload(RoutingGroup.provider_limits).selectinload(RoutingProviderLimit.provider),
-        )
+        .options(selectinload(RoutingGroup.targets).selectinload(RoutingTarget.provider))
         .order_by(RoutingGroup.name)
     )
     groups = result.scalars().all()
@@ -807,14 +775,6 @@ async def compile_routing_groups(session: AsyncSession) -> list[dict]:
             }
             for target in sorted(group.targets, key=lambda t: (t.priority, t.id))
         ]
-        limits = [
-            {
-                "provider_id": limit.provider_id,
-                "provider_name": limit.provider.name if limit.provider else None,
-                "max_requests_per_hour": limit.max_requests_per_hour,
-            }
-            for limit in sorted(group.provider_limits, key=lambda p: p.provider_id)
-        ]
         compiled.append(
             {
                 "id": group.id,
@@ -822,7 +782,6 @@ async def compile_routing_groups(session: AsyncSession) -> list[dict]:
                 "description": group.description,
                 "capabilities": group.capabilities_list,
                 "targets": targets,
-                "provider_limits": limits,
             }
         )
     return compiled

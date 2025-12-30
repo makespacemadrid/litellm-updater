@@ -90,6 +90,8 @@ async def ensure_minimum_schema(engine: AsyncEngine) -> None:
             await conn.exec_driver_sql("ALTER TABLE providers ADD COLUMN pricing_profile VARCHAR")
         if "pricing_override" not in provider_columns:
             await conn.exec_driver_sql("ALTER TABLE providers ADD COLUMN pricing_override TEXT")
+        if "max_requests_per_hour" not in provider_columns:
+            await conn.exec_driver_sql("ALTER TABLE providers ADD COLUMN max_requests_per_hour INTEGER")
         # Always try to add auto_detect_fim column (will fail if already exists)
         logger.info(f"Checking auto_detect_fim column... current columns: {provider_columns}")
         try:
