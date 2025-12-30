@@ -397,6 +397,7 @@ def create_app() -> FastAPI:
         api_key: str | None = Form(None),
         prefix: str | None = Form(None),
         default_ollama_mode: str | None = Form(None),
+        model_filter: str | None = Form(None),
         session: AsyncSession = Depends(get_session)
     ):
         """Legacy endpoint for creating providers - redirects to API."""
@@ -408,7 +409,8 @@ def create_app() -> FastAPI:
             type_=type,
             api_key=api_key,
             prefix=prefix,
-            default_ollama_mode=default_ollama_mode
+            default_ollama_mode=default_ollama_mode,
+            model_filter=model_filter
         )
         from fastapi.responses import RedirectResponse
         return RedirectResponse(url="/admin", status_code=303)

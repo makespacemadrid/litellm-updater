@@ -40,6 +40,21 @@ async def sync_provider(session, config, provider, push_to_litellm: bool = True)
 
         logger.info("Found %d models from %s", len(source_models.models), provider.name)
 
+        # Apply model filter if configured
+        if provider.model_filter:
+            original_count = len(source_models.models)
+            filtered_models = [
+                m for m in source_models.models
+                if provider.model_filter.lower() in m.id.lower()
+            ]
+            source_models.models = filtered_models
+            logger.info(
+                "Applied filter '%s': %d models matched (filtered out %d)",
+                provider.model_filter,
+                len(filtered_models),
+                original_count - len(filtered_models)
+            )
+
         # Track active model IDs
         active_model_ids = set()
 

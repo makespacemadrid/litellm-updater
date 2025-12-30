@@ -96,6 +96,7 @@ async def create_provider(
     pricing_profile: str | None = None,
     pricing_override: dict | None = None,
     auto_detect_fim: bool = True,
+    model_filter: str | None = None,
 ) -> Provider:
     """Create a new provider."""
     if type_ == "ollama" and default_ollama_mode is None:
@@ -110,6 +111,7 @@ async def create_provider(
         sync_enabled=sync_enabled,
         pricing_profile=pricing_profile,
         auto_detect_fim=auto_detect_fim,
+        model_filter=model_filter,
     )
     provider.tags_list = normalize_tags(tags)
     provider.access_groups_list = normalize_tags(access_groups)
@@ -142,6 +144,7 @@ async def update_provider(
     api_key: str | None = None,
     prefix: str | None = None,
     default_ollama_mode: str | None = None,
+    model_filter: str | None = None,
     tags: list[str] | None = None,
     access_groups: list[str] | None = None,
     sync_enabled: bool | None = None,
@@ -164,6 +167,8 @@ async def update_provider(
         provider.default_ollama_mode = default_ollama_mode
     elif provider.type == "ollama" and provider.default_ollama_mode is None:
         provider.default_ollama_mode = "ollama_chat"
+    if model_filter is not None:
+        provider.model_filter = model_filter
     if tags is not None:
         provider.tags_list = normalize_tags(tags)
     if access_groups is not None:

@@ -31,6 +31,7 @@ class Provider(Base):
     pricing_override: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON object
     sync_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     auto_detect_fim: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    model_filter: Mapped[str | None] = mapped_column(String, nullable=True)  # Regex or substring filter for model names
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
