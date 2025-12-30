@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from shared.database import create_engine, init_session_maker, get_session, ensure_minimum_schema
 from shared.crud import get_all_providers, get_config, get_provider_by_id
-from frontend.routes import providers, models, admin, compat, litellm
+from frontend.routes import providers, models, admin, compat, litellm, routing_groups
 from backend import provider_sync
 from sqlalchemy import select, func, case
 from shared.db_models import Model, Provider
@@ -96,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(models.router, prefix="/api/models", tags=["models"])
     app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
     app.include_router(compat.router, prefix="/api/compat", tags=["compat"])
+    app.include_router(routing_groups.router, prefix="/api/routing-groups", tags=["routing-groups"])
     app.include_router(litellm.router, prefix="/litellm", tags=["litellm"])
 
     # HTML Routes
@@ -359,6 +360,13 @@ def create_app() -> FastAPI:
             "config": config_dict
         })
 
+    @app.get("/routing", response_class=HTMLResponse)
+    async def routing_groups_page(request: Request):
+        """Routing group configuration page."""
+        return templates.TemplateResponse("routing_groups.html", {
+            "request": request
+        })
+
     @app.post("/sync")
     async def manual_sync(request: Request, session = Depends(get_session)):
         """
@@ -451,6 +459,7 @@ def create_app() -> FastAPI:
         prefix: str | None = Form(None),
         default_ollama_mode: str | None = Form(None),
         model_filter: str | None = Form(None),
+        model_filter_exclude: str | None = Form(None),
         sync_interval_seconds: int | None = Form(None),
         session: AsyncSession = Depends(get_session)
     ):
@@ -465,6 +474,7 @@ def create_app() -> FastAPI:
             prefix=prefix,
             default_ollama_mode=default_ollama_mode,
             model_filter=model_filter,
+            model_filter_exclude=model_filter_exclude,
             sync_interval_seconds=sync_interval_seconds
         )
         from fastapi.responses import RedirectResponse

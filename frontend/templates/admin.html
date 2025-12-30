@@ -158,7 +158,8 @@ async function loadProviders() {
           <strong>${p.name}</strong> — ${p.type} (${p.base_url})
           ${!p.sync_enabled ? '<span style="color: orange; font-weight: bold;"> [SYNC DISABLED]</span>' : ''}
           ${p.prefix ? `<br><span class="muted">Prefix: ${p.prefix}</span>` : ''}
-          ${p.model_filter ? `<br><span class="muted">Filter: ${p.model_filter}</span>` : ''}
+          ${p.model_filter ? `<br><span class="muted">Include: ${p.model_filter}</span>` : ''}
+          ${p.model_filter_exclude ? `<br><span class="muted">Exclude: ${p.model_filter_exclude}</span>` : ''}
           ${p.default_ollama_mode ? `<br><span class="muted">Ollama Mode: ${p.default_ollama_mode}</span>` : ''}
           ${p.tags && p.tags.length ? `<br><span class="muted">Tags: ${p.tags.join(', ')}</span>` : ''}
           ${p.access_groups && p.access_groups.length ? `<br><span class="muted">Access Groups: ${p.access_groups.join(', ')}</span>` : ''}
@@ -269,6 +270,7 @@ async function openEditProvider(id) {
     document.getElementById('edit-api-key').value = provider.api_key || '';
     document.getElementById('edit-prefix').value = provider.prefix || '';
     document.getElementById('edit-model-filter').value = provider.model_filter || '';
+    document.getElementById('edit-model-filter-exclude').value = provider.model_filter_exclude || '';
     document.getElementById('edit-default-ollama-mode').value = provider.default_ollama_mode || '';
     document.getElementById('edit-tags').value = (provider.tags || []).join(', ');
     document.getElementById('edit-access-groups').value = (provider.access_groups || []).join(', ');
@@ -343,7 +345,8 @@ document.addEventListener('DOMContentLoaded', () => {
         </label>
         <label>API Key <input type="text" name="api_key" /></label>
         <label>Prefix <input type="text" name="prefix" placeholder="e.g., mks-ollama" /></label>
-        <label>Model Filter <input type="text" name="model_filter" placeholder="e.g., :free (only sync models containing this text)" /></label>
+        <label>Model Filter (include) <input type="text" name="model_filter" placeholder="e.g., free, instruct" /></label>
+        <label>Model Filter (exclude) <input type="text" name="model_filter_exclude" placeholder="e.g., gpt, llama" /></label>
         <label>Tags <input type="text" name="tags" placeholder="Comma separated (e.g., team-a, prod)" /></label>
         <label>Access Groups <input type="text" name="access_groups" placeholder="Comma separated (e.g., compat, tts)" /></label>
         <label>
@@ -413,7 +416,8 @@ document.addEventListener('DOMContentLoaded', () => {
         </label>
         <label>API Key <input type="text" id="edit-api-key" name="api_key" /></label>
         <label>Prefix <input type="text" id="edit-prefix" name="prefix" placeholder="e.g., mks-ollama" /></label>
-        <label>Model Filter <input type="text" id="edit-model-filter" name="model_filter" placeholder="e.g., :free (only sync models containing this text)" /></label>
+        <label>Model Filter (include) <input type="text" id="edit-model-filter" name="model_filter" placeholder="e.g., free, instruct" /></label>
+        <label>Model Filter (exclude) <input type="text" id="edit-model-filter-exclude" name="model_filter_exclude" placeholder="e.g., gpt, llama" /></label>
         <label>Tags <input type="text" id="edit-tags" name="tags" placeholder="Comma separated" /></label>
         <label>Access Groups <input type="text" id="edit-access-groups" name="access_groups" placeholder="Comma separated (e.g., compat, tts)" /></label>
         <label>

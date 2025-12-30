@@ -3,7 +3,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -32,7 +32,8 @@ class Provider(Base):
     sync_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sync_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Override global sync interval (0 = use global)
     auto_detect_fim: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    model_filter: Mapped[str | None] = mapped_column(String, nullable=True)  # Regex or substring filter for model names
+    model_filter: Mapped[str | None] = mapped_column(String, nullable=True)  # Include substring filter for model names
+    model_filter_exclude: Mapped[str | None] = mapped_column(String, nullable=True)  # Exclude substring filter for model names
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
     )
@@ -336,6 +337,110 @@ class Model(Base):
         if self.provider and self.provider.access_groups_list:
             return self.provider.access_groups_list
         return []
+
+
+class RoutingGroup(Base):
+    """Named routing group with ordered model targets."""
+
+    __tablename__ = "routing_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    targets: Mapped[list["RoutingTarget"]] = relationship(
+        "RoutingTarget", back_populates="group", cascade="all, delete-orphan"
+    )
+    provider_limits: Mapped[list["RoutingProviderLimit"]] = relationship(
+        "RoutingProviderLimit", back_populates="group", cascade="all, delete-orphan"
+    )
+
+    @property
+    def capabilities_list(self) -> list[str]:
+        """Parse capabilities JSON to list."""
+        if not self.capabilities:
+            return []
+        return json.loads(self.capabilities)
+
+    @capabilities_list.setter
+    def capabilities_list(self, value: list[str]) -> None:
+        """Store capabilities as JSON."""
+        self.capabilities = json.dumps(value) if value else None
+
+
+class RoutingTarget(Base):
+    """Ordered routing target inside a group."""
+
+    __tablename__ = "routing_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("routing_groups.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_id: Mapped[int] = mapped_column(
+        ForeignKey("providers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    model_id: Mapped[str] = mapped_column(String, nullable=False)
+    weight: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    group: Mapped["RoutingGroup"] = relationship("RoutingGroup", back_populates="targets")
+    provider: Mapped["Provider"] = relationship("Provider")
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "provider_id", "model_id", name="uq_routing_target"),
+    )
+
+
+class RoutingProviderLimit(Base):
+    """Per-provider rate limit for a routing group."""
+
+    __tablename__ = "routing_provider_limits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("routing_groups.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_id: Mapped[int] = mapped_column(
+        ForeignKey("providers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    max_requests_per_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    group: Mapped["RoutingGroup"] = relationship("RoutingGroup", back_populates="provider_limits")
+    provider: Mapped["Provider"] = relationship("Provider")
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "provider_id", name="uq_routing_provider_limit"),
+    )
 
     def get_display_name(self, apply_prefix: bool = True) -> str:
         """Return model name with optional provider prefix."""

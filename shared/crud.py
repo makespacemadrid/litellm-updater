@@ -6,7 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .db_models import Config, Model, Provider
+from .db_models import (
+    Config,
+    Model,
+    Provider,
+    RoutingGroup,
+    RoutingTarget,
+    RoutingProviderLimit,
+)
 from .models import ModelMetadata, SourceEndpoint
 from .pricing_profiles import apply_pricing_overrides
 from .tags import generate_model_tags, normalize_tags
@@ -114,6 +121,7 @@ async def create_provider(
     pricing_override: dict | None = None,
     auto_detect_fim: bool = True,
     model_filter: str | None = None,
+    model_filter_exclude: str | None = None,
 ) -> Provider:
     """Create a new provider."""
     if type_ == "ollama" and default_ollama_mode is None:
@@ -131,6 +139,7 @@ async def create_provider(
         pricing_profile=pricing_profile,
         auto_detect_fim=auto_detect_fim,
         model_filter=model_filter,
+        model_filter_exclude=model_filter_exclude,
     )
     provider.tags_list = normalize_tags(tags)
     provider.access_groups_list = normalize_tags(access_groups)
@@ -171,6 +180,7 @@ async def update_provider(
     pricing_profile: str | None = None,
     pricing_override: dict | None = None,
     auto_detect_fim: bool | None = None,
+    model_filter_exclude: str | None = None,
 ) -> Provider:
     """Update existing provider."""
     if name is not None:
@@ -189,6 +199,8 @@ async def update_provider(
         provider.default_ollama_mode = "ollama_chat"
     if model_filter is not None:
         provider.model_filter = model_filter
+    if model_filter_exclude is not None:
+        provider.model_filter_exclude = model_filter_exclude
     if tags is not None:
         provider.tags_list = normalize_tags(tags)
     if access_groups is not None:
@@ -603,3 +615,214 @@ async def update_compat_model(
 
     model.updated_at = datetime.now(UTC)
     return model
+
+
+# Routing Group CRUD Operations
+
+
+def _normalize_capabilities(capabilities: list[str] | None) -> list[str]:
+    """Normalize capability names for routing filters."""
+    return normalize_tags(capabilities or [])
+
+
+async def get_routing_groups(session: AsyncSession) -> list[RoutingGroup]:
+    """Return all routing groups."""
+    result = await session.execute(select(RoutingGroup).order_by(RoutingGroup.name))
+    return list(result.scalars().all())
+
+
+async def get_routing_group(
+    session: AsyncSession, group_id: int, include_children: bool = True
+) -> RoutingGroup | None:
+    """Return a routing group by id."""
+    query = select(RoutingGroup).where(RoutingGroup.id == group_id)
+    if include_children:
+        query = query.options(
+            selectinload(RoutingGroup.targets).selectinload(RoutingTarget.provider),
+            selectinload(RoutingGroup.provider_limits).selectinload(RoutingProviderLimit.provider),
+        )
+    result = await session.execute(query)
+    return result.scalar_one_or_none()
+
+
+async def create_routing_group(
+    session: AsyncSession,
+    name: str,
+    description: str | None = None,
+    capabilities: list[str] | None = None,
+) -> RoutingGroup:
+    """Create a new routing group."""
+    group = RoutingGroup(name=name, description=description)
+    group.capabilities_list = _normalize_capabilities(capabilities)
+    session.add(group)
+    await session.flush()
+    return group
+
+
+async def update_routing_group(
+    session: AsyncSession,
+    group: RoutingGroup,
+    name: str | None = None,
+    description: str | None = None,
+    capabilities: list[str] | None = None,
+) -> RoutingGroup:
+    """Update routing group attributes."""
+    if name is not None:
+        group.name = name
+    if description is not None:
+        group.description = description or None
+    if capabilities is not None:
+        group.capabilities_list = _normalize_capabilities(capabilities)
+    group.updated_at = datetime.now(UTC)
+    return group
+
+
+async def delete_routing_group(session: AsyncSession, group: RoutingGroup) -> None:
+    """Delete a routing group."""
+    await session.delete(group)
+
+
+def _build_routing_targets(
+    group_id: int, targets: list[dict]
+) -> list[RoutingTarget]:
+    """Build RoutingTarget rows from payload."""
+    built: list[RoutingTarget] = []
+    for target in targets:
+        built.append(
+            RoutingTarget(
+                group_id=group_id,
+                provider_id=int(target["provider_id"]),
+                model_id=str(target["model_id"]),
+                weight=int(target.get("weight", 1)),
+                priority=int(target.get("priority", 0)),
+                enabled=bool(target.get("enabled", True)),
+            )
+        )
+    return built
+
+
+def _build_provider_limits(
+    group_id: int, limits: list[dict]
+) -> list[RoutingProviderLimit]:
+    """Build RoutingProviderLimit rows from payload."""
+    built: list[RoutingProviderLimit] = []
+    for limit in limits:
+        raw_limit = limit.get("max_requests_per_hour")
+        max_requests = int(raw_limit) if raw_limit not in (None, "") else None
+        built.append(
+            RoutingProviderLimit(
+                group_id=group_id,
+                provider_id=int(limit["provider_id"]),
+                max_requests_per_hour=max_requests,
+            )
+        )
+    return built
+
+
+async def replace_routing_targets(
+    session: AsyncSession, group: RoutingGroup, targets: list[dict]
+) -> RoutingGroup:
+    """Replace routing targets for a group."""
+    group.targets = _build_routing_targets(group.id, targets)
+    group.updated_at = datetime.now(UTC)
+    return group
+
+
+async def replace_provider_limits(
+    session: AsyncSession, group: RoutingGroup, limits: list[dict]
+) -> RoutingGroup:
+    """Replace provider limits for a group."""
+    group.provider_limits = _build_provider_limits(group.id, limits)
+    group.updated_at = datetime.now(UTC)
+    return group
+
+
+async def list_routing_candidates(
+    session: AsyncSession,
+    capabilities: list[str] | None = None,
+    query: str | None = None,
+) -> list[dict]:
+    """List models eligible for routing groups with optional filters."""
+    normalized_caps = _normalize_capabilities(capabilities)
+    search = query.strip().lower() if query else None
+
+    result = await session.execute(
+        select(Model)
+        .join(Provider)
+        .where(
+            Model.is_orphaned == False,  # noqa: E712
+            Provider.type != "compat",
+        )
+        .options(selectinload(Model.provider))
+    )
+    models = result.scalars().all()
+    candidates: list[dict] = []
+    for model in models:
+        provider = model.provider
+        model_caps = _normalize_capabilities(model.capabilities_list)
+        if normalized_caps and not set(normalized_caps).issubset(model_caps):
+            continue
+        if search:
+            haystack = f"{provider.name} {model.model_id}".lower()
+            if search not in haystack:
+                continue
+        candidates.append(
+            {
+                "provider_id": provider.id,
+                "provider_name": provider.name,
+                "provider_type": provider.type,
+                "model_id": model.model_id,
+                "model_type": model.model_type,
+                "capabilities": model_caps,
+                "display_name": f"{provider.name}/{model.model_id}",
+            }
+        )
+    candidates.sort(key=lambda item: (item["provider_name"].lower(), item["model_id"].lower()))
+    return candidates
+
+
+async def compile_routing_groups(session: AsyncSession) -> list[dict]:
+    """Compile routing groups into a proxy-friendly payload."""
+    result = await session.execute(
+        select(RoutingGroup)
+        .options(
+            selectinload(RoutingGroup.targets).selectinload(RoutingTarget.provider),
+            selectinload(RoutingGroup.provider_limits).selectinload(RoutingProviderLimit.provider),
+        )
+        .order_by(RoutingGroup.name)
+    )
+    groups = result.scalars().all()
+    compiled: list[dict] = []
+    for group in groups:
+        targets = [
+            {
+                "provider_id": target.provider_id,
+                "provider_name": target.provider.name if target.provider else None,
+                "provider_type": target.provider.type if target.provider else None,
+                "base_url": target.provider.base_url if target.provider else None,
+                "model_id": target.model_id,
+                "weight": target.weight,
+                "priority": target.priority,
+                "enabled": target.enabled,
+            }
+            for target in sorted(group.targets, key=lambda t: (t.priority, t.id))
+        ]
+        limits = [
+            {
+                "provider_id": limit.provider_id,
+                "provider_name": limit.provider.name if limit.provider else None,
+                "max_requests_per_hour": limit.max_requests_per_hour,
+            }
+            for limit in sorted(group.provider_limits, key=lambda p: p.provider_id)
+        ]
+        compiled.append(
+            {
+                "id": group.id,
+                "name": group.name,
+                "description": group.description,
+                "capabilities": group.capabilities_list,
+                "targets": targets,
+                "provider_limits": limits,
+            }
+        )
+    return compiled

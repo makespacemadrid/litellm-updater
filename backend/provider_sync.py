@@ -11,6 +11,23 @@ from backend.litellm_client import reconcile_litellm_models
 logger = logging.getLogger(__name__)
 
 
+def _parse_filter_terms(raw: str | None) -> list[str]:
+    """Split comma-separated filter terms into normalized lowercase tokens."""
+    if not raw:
+        return []
+    return [term.strip().lower() for term in raw.split(",") if term.strip()]
+
+
+def _matches_include_exclude(model_id: str, include_terms: list[str], exclude_terms: list[str]) -> bool:
+    """Return True if model_id matches include terms and not excluded."""
+    model_id_lower = model_id.lower()
+    if exclude_terms and any(term in model_id_lower for term in exclude_terms):
+        return False
+    if include_terms:
+        return any(term in model_id_lower for term in include_terms)
+    return True
+
+
 def _has_user_overrides(model: Model) -> bool:
     """
     Check if a model has any user-applied configuration overrides.
@@ -71,16 +88,19 @@ async def sync_provider(session, config, provider, push_to_litellm: bool = True)
         logger.info("Found %d models from %s", len(source_models.models), provider.name)
 
         # Apply model filter if configured
-        if provider.model_filter:
+        include_terms = _parse_filter_terms(provider.model_filter)
+        exclude_terms = _parse_filter_terms(provider.model_filter_exclude)
+        if include_terms or exclude_terms:
             original_count = len(source_models.models)
             filtered_models = [
                 m for m in source_models.models
-                if provider.model_filter.lower() in m.id.lower()
+                if _matches_include_exclude(m.id, include_terms, exclude_terms)
             ]
             source_models.models = filtered_models
             logger.info(
-                "Applied filter '%s': %d models matched (filtered out %d)",
-                provider.model_filter,
+                "Applied filters include='%s' exclude='%s': %d models matched (filtered out %d)",
+                provider.model_filter or "",
+                provider.model_filter_exclude or "",
                 len(filtered_models),
                 original_count - len(filtered_models)
             )

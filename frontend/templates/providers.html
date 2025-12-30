@@ -273,9 +273,15 @@
             </div>
 
             <div class="form-group">
-                <label>Model Filter (optional)</label>
+                <label>Model Filter (include)</label>
                 <input type="text" id="preset_model_filter" name="model_filter">
-                <div class="help-text">Only sync models containing this text (e.g., ":free")</div>
+                <div class="help-text">Include models containing any of these terms (e.g., "free, instruct")</div>
+            </div>
+
+            <div class="form-group">
+                <label>Model Filter (exclude)</label>
+                <input type="text" id="preset_model_filter_exclude" name="model_filter_exclude">
+                <div class="help-text">Exclude models containing any of these terms (e.g., "gpt, llama")</div>
             </div>
 
             <div class="form-group">
@@ -338,9 +344,15 @@
             </div>
 
             <div class="form-group">
-                <label>Model Filter</label>
+                <label>Model Filter (include)</label>
                 <input type="text" id="edit_model_filter" name="model_filter">
-                <div class="help-text">Only sync models containing this text</div>
+                <div class="help-text">Include models containing any of these terms</div>
+            </div>
+
+            <div class="form-group">
+                <label>Model Filter (exclude)</label>
+                <input type="text" id="edit_model_filter_exclude" name="model_filter_exclude">
+                <div class="help-text">Exclude models containing any of these terms</div>
             </div>
 
             <div class="form-group">
@@ -410,9 +422,15 @@
             </div>
 
             <div class="form-group">
-                <label>Model Filter</label>
+                <label>Model Filter (include)</label>
                 <input type="text" name="model_filter">
-                <div class="help-text">Only sync models containing this text</div>
+                <div class="help-text">Include models containing any of these terms</div>
+            </div>
+
+            <div class="form-group">
+                <label>Model Filter (exclude)</label>
+                <input type="text" name="model_filter_exclude">
+                <div class="help-text">Exclude models containing any of these terms</div>
             </div>
 
             <div class="form-group">
@@ -505,7 +523,10 @@
                     <td><strong>${provider.name}</strong></td>
                     <td><span class="badge ${provider.type}">${provider.type}</span></td>
                     <td style="font-size: 12px; color: #888;">${provider.base_url}</td>
-                    <td>${provider.model_filter || '<span style="color: #666;">none</span>'}</td>
+                    <td>
+                        ${provider.model_filter ? `<div>Include: ${provider.model_filter}</div>` : '<span style="color: #666;">Include: none</span>'}
+                        ${provider.model_filter_exclude ? `<div>Exclude: ${provider.model_filter_exclude}</div>` : '<div style="color: #666;">Exclude: none</div>'}
+                    </td>
                     <td><span class="badge ${provider.sync_enabled ? 'enabled' : 'disabled'}">${provider.sync_enabled ? 'enabled' : 'disabled'}</span></td>
                     <td class="interval-display">${intervalDisplay}</td>
                     <td class="actions">
@@ -541,6 +562,7 @@
         document.getElementById('preset_base_url').value = preset.base_url || '';
         document.getElementById('preset_type').value = preset.type || '';
         document.getElementById('preset_model_filter').value = preset.model_filter || '';
+        document.getElementById('preset_model_filter_exclude').value = preset.model_filter_exclude || '';
         document.getElementById('preset_sync_interval').value = preset.sync_interval_seconds || 0;
         document.getElementById('preset_recommended_interval').textContent = preset.sync_interval_seconds || 0;
 
@@ -622,6 +644,7 @@
         document.getElementById('edit_base_url').value = provider.base_url;
         document.getElementById('edit_type').value = provider.type;
         document.getElementById('edit_model_filter').value = provider.model_filter || '';
+        document.getElementById('edit_model_filter_exclude').value = provider.model_filter_exclude || '';
         document.getElementById('edit_prefix').value = provider.prefix || '';
         document.getElementById('edit_ollama_mode').value = provider.default_ollama_mode || '';
         document.getElementById('edit_sync_interval').value = provider.sync_interval_seconds || 0;
